@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 金鑰與本機設定（不可提交）
+.streamlit/secrets.toml
+.env
+*.env
+
+# 資料檔與個資（不可提交）
+*.xlsx
+*.xls
+*.csv
+*.sqlite3
+00_DB/
+output_results/
+表單/
+
+# 截圖、簡報、壓縮檔
+*.png
+*.jpg
+*.jpeg
+*.pptx
+*.zip
+
+# 路網資料（體積大，依 osrm_motorcycle 腳本自行建立）
+osrm_motorcycle/data/
+
+# 備份與開發暫存
+_backup*/
+*.bak*
+*.patch
