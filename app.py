@@ -323,7 +323,7 @@ REQUIRED_TASKS_COLUMNS = ["任務ID", "案家ID", "時間窗_開始", "時間窗
 
 #Service_Code_2、Units_2不用列為必填，因為有些任務只有一個服務碼。
 
-st.set_page_config(page_title="HomeCare AI｜智慧居服排班", page_icon="🌿", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="HomeCare AI｜智慧居服排班", page_icon="🌿", layout="wide", initial_sidebar_state="expanded")
 try:
     # 「載入示範案例」與換頁保存設定會先寫入 session 再畫元件；關掉 Streamlit 的重複設定提醒，避免畫面多出黃色警告。
     from streamlit import config as _st_config
@@ -462,7 +462,7 @@ with _head_col:
 with _font_col:
     st.segmented_control('字體大小', list(FONT_SCALES), key='cf_font_scale',
                          help='整個畫面的字體大小；選擇會保留到下次換頁。')
-# 方案 C：頂部 1→5 步驟導引是主要導覽（側邊欄預設收合，只放狀態與個資設定）。
+# 方案 C：頂部 1→5 步驟導引是主要導覽（側邊欄預設展開，放流程選單、狀態與個資設定）。
 _steps_done = set()
 if st.session_state.get('_data_source_key'):
     _steps_done.add(M_IMPORT)

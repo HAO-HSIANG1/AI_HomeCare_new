@@ -241,11 +241,109 @@ button[kind="segmented_controlActive"] p, [data-testid="stBaseButton-segmented_c
 
 FONT_SCALES = {'標準': 1.0, '大': 1.12, '特大': 1.25}
 
+# 最後一層修正（必須放在所有樣式之後）：
+# 1. 按鈕所有狀態（hover／按下／focus／停用）都明確指定底色與字色——Streamlit 預設「按下」會把字變白、
+#    「focus」會換字色，和我們的白底覆寫衝突，造成按下後看不到字。
+# 2. 按鈕內文字 <p> 明確指定顏色：[data-testid="stMain"] p 的全域字色會蓋過按鈕繼承的白字，造成深底深字。
+# 3. 重跑時 Streamlit 會把舊畫面淡化成 33% 透明（stale），看起來像「反白」；改成維持原樣。
+# 4. Streamlit 頂部固定列（約 3.75rem）會蓋住頁首，主內容往下讓出空間。
+FIX_CSS = """
+<style>
+/* ---- 頂部固定列不再擋住頁首 ---- */
+[data-testid="stHeader"]{ background:var(--cf-bg) !important; border-bottom:1px solid var(--cf-line); height:3.5rem; }
+[data-testid="stMainBlockContainer"]{ padding-top:calc(3.5rem + 14px) !important; }
+[data-testid="stSidebarHeader"]{ height:3.5rem; }
+
+/* ---- 重跑期間不要把畫面淡化 ---- */
+[data-stale="true"], .stale-element, [data-testid="stElementContainer"][data-stale="true"]{ opacity:1 !important; filter:none !important; }
+
+/* ---- 主要按鈕：深藍底＋白字，所有狀態一致 ---- */
+.stButton button[kind^="primary"], .stDownloadButton button[kind^="primary"], .stFormSubmitButton button[kind^="primary"],
+button[data-testid^="stBaseButton-primary"]{
+  background:var(--cf-primary) !important; border:2px solid var(--cf-primary) !important; color:#FFFFFF !important; }
+.stButton button[kind^="primary"]:hover, .stDownloadButton button[kind^="primary"]:hover, .stFormSubmitButton button[kind^="primary"]:hover,
+button[data-testid^="stBaseButton-primary"]:hover,
+.stButton button[kind^="primary"]:active, .stDownloadButton button[kind^="primary"]:active, .stFormSubmitButton button[kind^="primary"]:active,
+button[data-testid^="stBaseButton-primary"]:active{
+  background:var(--cf-primary-ink) !important; border-color:var(--cf-primary-ink) !important; color:#FFFFFF !important; }
+.stButton button[kind^="primary"]:focus, .stDownloadButton button[kind^="primary"]:focus, .stFormSubmitButton button[kind^="primary"]:focus,
+button[data-testid^="stBaseButton-primary"]:focus{ color:#FFFFFF !important; }
+.stButton button[kind^="primary"] p, .stDownloadButton button[kind^="primary"] p, .stFormSubmitButton button[kind^="primary"] p,
+button[data-testid^="stBaseButton-primary"] p{ color:#FFFFFF !important; }
+
+/* ---- 次要按鈕：白底＋深字；按下時淡藍底＋深藍字（不再變白字） ---- */
+.stButton button[kind^="secondary"], .stDownloadButton button[kind^="secondary"], .stFormSubmitButton button[kind^="secondary"],
+button[data-testid^="stBaseButton-secondary"]{
+  background:#FFFFFF !important; border:2px solid var(--cf-line-2) !important; color:var(--cf-ink) !important; }
+.stButton button[kind^="secondary"] p, .stDownloadButton button[kind^="secondary"] p, .stFormSubmitButton button[kind^="secondary"] p,
+button[data-testid^="stBaseButton-secondary"] p{ color:var(--cf-ink) !important; }
+.stButton button[kind^="secondary"]:hover, .stDownloadButton button[kind^="secondary"]:hover, .stFormSubmitButton button[kind^="secondary"]:hover,
+button[data-testid^="stBaseButton-secondary"]:hover{
+  background:#F3F8FA !important; border-color:var(--cf-primary) !important; color:var(--cf-primary-ink) !important; }
+.stButton button[kind^="secondary"]:active, .stDownloadButton button[kind^="secondary"]:active, .stFormSubmitButton button[kind^="secondary"]:active,
+button[data-testid^="stBaseButton-secondary"]:active,
+.stButton button[kind^="secondary"]:focus:not(:active), .stDownloadButton button[kind^="secondary"]:focus:not(:active),
+button[data-testid^="stBaseButton-secondary"]:focus:not(:active){
+  background:var(--cf-primary-soft) !important; border-color:var(--cf-primary) !important; color:var(--cf-primary-ink) !important; }
+.stButton button[kind^="secondary"]:hover p, .stButton button[kind^="secondary"]:active p, .stButton button[kind^="secondary"]:focus p,
+.stDownloadButton button[kind^="secondary"]:hover p, .stDownloadButton button[kind^="secondary"]:active p, .stDownloadButton button[kind^="secondary"]:focus p,
+button[data-testid^="stBaseButton-secondary"]:hover p, button[data-testid^="stBaseButton-secondary"]:active p,
+button[data-testid^="stBaseButton-secondary"]:focus p{ color:var(--cf-primary-ink) !important; }
+
+/* ---- 停用按鈕：灰底灰字，但仍看得清楚 ---- */
+.stButton button:disabled, .stDownloadButton button:disabled, .stFormSubmitButton button:disabled{
+  background:#EFE8DD !important; border-color:#E0D5C4 !important; color:#7A6C5F !important; opacity:1 !important; }
+.stButton button:disabled p, .stDownloadButton button:disabled p, .stFormSubmitButton button:disabled p{ color:#7A6C5F !important; }
+
+/* ---- 檔案上傳按鈕 ---- */
+[data-testid="stFileUploader"] button, [data-testid="stFileUploader"] button:hover,
+[data-testid="stFileUploader"] button:active, [data-testid="stFileUploader"] button:focus{
+  background:var(--cf-primary) !important; border-color:var(--cf-primary) !important; color:#FFFFFF !important; }
+[data-testid="stFileUploader"] button:hover, [data-testid="stFileUploader"] button:active{ background:var(--cf-primary-ink) !important; }
+[data-testid="stFileUploader"] button p, [data-testid="stFileUploader"] button span{ color:#FFFFFF !important; }
+
+/* ---- 分段選擇（字體大小、分頁切換） ---- */
+button[kind="segmented_control"], [data-testid="stBaseButton-segmented_control"]{ background:#FFFFFF !important; color:var(--cf-ink) !important; }
+button[kind="segmented_control"] p, [data-testid="stBaseButton-segmented_control"] p{ color:var(--cf-ink) !important; }
+button[kind="segmented_control"]:hover, [data-testid="stBaseButton-segmented_control"]:hover,
+button[kind="segmented_control"]:active, [data-testid="stBaseButton-segmented_control"]:active{ background:var(--cf-primary-soft) !important; }
+button[kind="segmented_controlActive"], [data-testid="stBaseButton-segmented_controlActive"],
+button[kind="segmented_controlActive"]:hover, button[kind="segmented_controlActive"]:active, button[kind="segmented_controlActive"]:focus{
+  background:var(--cf-primary) !important; border-color:var(--cf-primary) !important; color:#FFFFFF !important; }
+
+/* ---- 以下為特定按鈕群組，必須放在通用規則之後 ---- */
+/* 1→5 步驟導引：未完成＝白底灰字；已完成＝實心綠底白字；目前＝深藍底白字＋外框 */
+[class*="st-key-cfstep_"] .stButton button, [class*="st-key-cfstep_"] .stButton button:hover,
+[class*="st-key-cfstep_"] .stButton button:active, [class*="st-key-cfstep_"] .stButton button:focus{
+  background:#FFFFFF !important; border:2px solid var(--cf-line-2) !important; }
+[class*="st-key-cfstep_"] .stButton button p{ color:#5A4D42 !important; }
+[class*="st-key-cfstep_"] .stButton button:hover{ border-color:var(--cf-primary) !important; background:#F3F8FA !important; }
+[class*="st-key-cfstep_done"] .stButton button, [class*="st-key-cfstep_done"] .stButton button:hover,
+[class*="st-key-cfstep_done"] .stButton button:active, [class*="st-key-cfstep_done"] .stButton button:focus{
+  background:#2F7A4F !important; border-color:#2F7A4F !important; }
+[class*="st-key-cfstep_done"] .stButton button:hover{ background:#246140 !important; border-color:#246140 !important; }
+[class*="st-key-cfstep_done"] .stButton button p{ color:#FFFFFF !important; }
+[class*="st-key-cfstep_now"] .stButton button, [class*="st-key-cfstep_now"] .stButton button:hover,
+[class*="st-key-cfstep_now"] .stButton button:active, [class*="st-key-cfstep_now"] .stButton button:focus{
+  background:var(--cf-primary) !important; border-color:var(--cf-primary) !important; box-shadow:0 0 0 5px #BFD7E2 !important; }
+[class*="st-key-cfstep_now"] .stButton button p{ color:#FFFFFF !important; font-weight:900 !important; }
+/* 大型分頁按鈕 */
+[class*="st-key-cftabs_"] .stButton button[kind="primary"], [class*="st-key-cftabs_"] .stButton button[kind="primary"]:hover,
+[class*="st-key-cftabs_"] .stButton button[kind="primary"]:active{ background:var(--cf-acc) !important; border-color:var(--cf-acc) !important; }
+/* AI 專屬按鈕（靛藍） */
+[class*="st-key-cfai"] .stButton button, [class*="st-key-cfai"] .stButton button:hover,
+[class*="st-key-cfai"] .stButton button:active, [class*="st-key-cfai"] .stButton button:focus{
+  background:var(--cf-ai-1) !important; border-color:var(--cf-ai-1) !important; color:#FFFFFF !important; }
+[class*="st-key-cfai"] .stButton button:hover, [class*="st-key-cfai"] .stButton button:active{ background:#3730A3 !important; border-color:#3730A3 !important; }
+[class*="st-key-cfai"] .stButton button p{ color:#FFFFFF !important; }
+</style>
+"""
+
 
 def inject_css(scale=1.12):
-    """全站樣式：舊版樣式表＋ v2026.11 Design System＋方案 C「暖心大字」覆寫層（每次重跑都要注入一次）。
+    """全站樣式：舊版樣式表＋ v2026.11 Design System＋方案 C「暖心大字」覆寫層＋最後修正層（每次重跑都要注入一次）。
     scale：字體倍率（標準 1.0／大 1.12／特大 1.25），所有字級都以 calc(px × --cf-s) 計算。"""
-    st.markdown(CSS + DESIGN_CSS + WARM_CSS + f'<style>:root{{--cf-s:{float(scale):.3f};}}</style>', unsafe_allow_html=True)
+    st.markdown(CSS + DESIGN_CSS + WARM_CSS + FIX_CSS + f'<style>:root{{--cf-s:{float(scale):.3f};}}</style>', unsafe_allow_html=True)
 
 
 def render_header(ai_ready=True, ai_text=None, privacy_on=True, version='v2026.10', scale=1.12):
