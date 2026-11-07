@@ -142,6 +142,19 @@ class WorkflowStore:
             return
         with self.connect() as db:
             db.executemany('INSERT OR IGNORE INTO workdays VALUES(?,?,?)', [(self.scope, cg, day) for cg, day in rows])
+    def replace_workdays(self, pairs, start_date, end_date):
+        """以「目前有效班表」覆寫 start_date～end_date（含）這段期間的上班日。
+
+        record_workdays 只增不減：同一期間重新排班、改派或撤銷後，舊的上班日仍留在帳本，
+        跑越多次越像「每天都上班」，下一期的連續上班判斷就會被誤擋。期間內一律以最新班表為準；
+        期間外（例如上個月已確定的紀錄）不動。
+        """
+        start, end = pd.Timestamp(start_date).strftime('%Y-%m-%d'), pd.Timestamp(end_date).strftime('%Y-%m-%d')
+        rows = {(str(cg).strip(), str(day)[:10]) for cg, day in pairs if str(cg).strip() and str(day).strip()}
+        rows = {(cg, day) for cg, day in rows if start <= day <= end}
+        with self.connect() as db:
+            db.execute('DELETE FROM workdays WHERE scope=? AND date>=? AND date<=?', (self.scope, start, end))
+            db.executemany('INSERT OR IGNORE INTO workdays VALUES(?,?,?)', [(self.scope, cg, day) for cg, day in rows])
     def recent_workdays(self, before_date, lookback=10):
         """回傳 {居服員ID: {日期字串,...}}：before_date 之前 lookback 天內、本機構已確定的上班日，
         作為新一輪排班「連續上班天數」判斷的跨月種子。before_date 當天不含在內。"""

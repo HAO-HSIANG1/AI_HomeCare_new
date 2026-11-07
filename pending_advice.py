@@ -285,6 +285,10 @@ def plain_reason(text):
         gap, need = float(m.group(1)), float(m.group(2))
         return (f'前一個服務結束後只剩 {gap:g} 分鐘，趕到這裡要 {need:g} 分鐘（差 {max(need - gap, 0):g} 分鐘）',
                 '把這個時段往後（或往前）挪一點就能解', '時間')
+    if '連續上班' in t:
+        m = re.search(r'連續上班\s*(\d+)\s*天，超過上限\s*(\d+)\s*天', t)
+        return (f"這位居服員會連續上班 {m.group(1)} 天（上限 {m.group(2)} 天）" if m else '這位居服員會連續上班超過上限天數',
+                '這幾天改由其他居服員（備援）服務，或調整休息日', '連續上班')
     if '連續工作' in t:
         m = re.search(r'將達\s*(\d+)\s*分鐘，上限\s*(\d+)', t)
         return (f"連續工作會到 {m.group(1)} 分鐘（上限 {m.group(2)}），中間排不出 30 分鐘休息" if m else '連續工作超過上限，中間排不出休息',

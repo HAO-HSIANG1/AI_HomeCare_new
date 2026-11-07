@@ -331,7 +331,7 @@ try:
 except Exception:
     pass
 from careflow_ui import (render_brand, section_title, render_summary, chips, flow_cards, file_status,
-                         MODULES, MODULE_KEYS, module_label, module_header, module_nav_buttons, subhead,
+                         MODULES, MODULE_KEYS, module_label, module_header, step_action_bar, subhead,
                          go_to_module, empty_module, big_tabs,
                          reason_picker, reason_category, compose_reason, REASON_HINT, CHANGE_REASONS,
                          render_header, side_brand, ready_cards, kpi_cards, conn_card, badges, reason_badge,
@@ -408,6 +408,23 @@ if _demo_period:
 if st.session_state.get('osrm_source_choice') not in _OSRM_CHOICES:
     st.session_state['osrm_source_choice'] = _SETTING_DEFAULTS['osrm_source_choice']
 
+# 方案 A：步驟上鎖。資料未匯入前「開始排班」上鎖；班表未產生前 03／04／主管報表上鎖。
+# 停在已上鎖的步驟（例如資料修改後舊班表被清除）時，退回最後一個可用的步驟。
+def _flow_locks():
+    locks = {}
+    if not st.session_state.get('_data_source_key'):
+        locks[M_SCHEDULE] = '請先在「① 匯入資料」載入機構 Excel'
+    if st.session_state.get('last_result') is None:
+        _why = '請先在「② 開始排班」產生班表' if M_SCHEDULE not in locks else '請先匯入資料並完成排班'
+        for _k in (M_ISSUES, M_REVIEW, M_ANALYTICS):
+            locks[_k] = _why
+    return locks
+
+
+_locks = _flow_locks()
+if st.session_state['cf_module'] in _locks:
+    st.session_state['cf_module'] = M_IMPORT if M_SCHEDULE in _locks else M_SCHEDULE
+
 
 def reset_policy_defaults():
     for key in ['cfg_buffer_mins','cfg_travel_penalty_weight','cfg_urgent_priority_bonus','cfg_continuity_bonus','cfg_previous_week_bonus','cfg_skill_bonus','cfg_sa10_price','cfg_hourly_wage','cfg_transition_wage','cfg_daily_cap','cfg_monthly_ot','google_query_limit']:
@@ -426,14 +443,13 @@ def _module_badge(key):
 
 with st.sidebar:
     side_brand()
-    st.markdown('<div class="cf-group">排班作業流程</div>', unsafe_allow_html=True)
-    _module = st.radio('功能模組', MODULE_KEYS, key='cf_module', label_visibility='collapsed',
-                       format_func=lambda k: module_label(k, _module_badge(k)))
-    st.caption('01→04 依排班流程操作；05 為主管效益分析，不影響班表。')
-    st.divider()
-    _sidebar_wake = st.container()
+    st.markdown('<div class="cf-group">目前狀態</div>', unsafe_allow_html=True)
     _sidebar_status = st.container()
+    _sidebar_wake = st.container()
+    st.divider()
+    _sidebar_rules = st.container()
     _sidebar_privacy = st.container()
+_module = st.session_state['cf_module']   # 換頁只透過頂部步驟列與底部操作列
 
 institution_key = '中化'  # 固定居服員與請假記錄依此名稱保存；不再需要在畫面上設定。
 sa10_price = defaults.sa10_hourly_price
@@ -462,16 +478,36 @@ with _head_col:
 with _font_col:
     st.segmented_control('字體大小', list(FONT_SCALES), key='cf_font_scale',
                          help='整個畫面的字體大小；選擇會保留到下次換頁。')
-# 方案 C：頂部 1→5 步驟導引是主要導覽（側邊欄預設展開，放流程選單、狀態與個資設定）。
-_steps_done = set()
-if st.session_state.get('_data_source_key'):
-    _steps_done.add(M_IMPORT)
-if st.session_state.get('last_result') is not None:
-    _steps_done.add(M_SCHEDULE)
-    _pending_now = st.session_state.get('pending_client_summary')
-    if _pending_now is not None and len(_pending_now) == 0:
-        _steps_done.add(M_ISSUES)
-render_stepper(_module, _steps_done)
+# 方案 A：頂部步驟列是唯一的換頁方式。位置先佔好，等資料讀完（知道這次有沒有資料）再畫，
+# 這樣剛上傳檔案的那一次畫面，「開始排班」就會立刻解鎖，不會慢一拍。每次執行只畫一次。
+_stepper_slot = st.container()
+
+
+def _draw_stepper(has_data=True):
+    if st.session_state.get('_stepper_drawn'):
+        return
+    st.session_state['_stepper_drawn'] = True
+    if not has_data:
+        st.session_state.pop('_data_source_key', None)   # 檔案已移除：「開始排班」重新上鎖
+    locks = _flow_locks()
+    done = set()
+    if has_data:
+        done.add(M_IMPORT)
+    if st.session_state.get('last_result') is not None:
+        done.add(M_SCHEDULE)
+        _pending_now = st.session_state.get('pending_client_summary')
+        if _pending_now is not None and len(_pending_now) == 0:
+            done.add(M_ISSUES)
+    warn = {}
+    if st.session_state.get('_result_stale') and st.session_state.get('last_result') is None:
+        warn[M_SCHEDULE] = '資料或排班規則已修改，舊班表已清除，請重新排班'
+    else:
+        st.session_state.pop('_result_stale', None)
+    with _stepper_slot:
+        render_stepper(_module, done, locked=locks, warn=warn)
+
+
+st.session_state['_stepper_drawn'] = False
 with _sidebar_wake:
     traffic_wake.panel(_osrm_host, 'sidebar', compact=True)
 import caregiver_engine as _engine_mod
@@ -492,10 +528,8 @@ skill_bonus = defaults.cert_bonus_dementia
 
 
 def render_dispatch_settings():
-    """01 模組：交通方式、排班規則及限制條件（值已在頁首讀入，這裡只負責顯示與調整）。"""
-    subhead('交通方式與排班規則')
-    _transport_col, _rule_col = st.columns(2, gap='large')
-    with _transport_col.container(border=True):
+    """側邊欄「排班規則設定」：交通方式、排班規則及限制條件（值已在頁首讀入，這裡只負責顯示與調整）。"""
+    if True:
         st.markdown('**🛵 交通方式**')
         st.caption('機車走自架 OSRM 機車路網；公車／捷運走 Google Routes TRANSIT，依員工資料的交通工具自動分流。')
         st.radio('機車路網', list(_OSRM_CHOICES), horizontal=True, key='osrm_source_choice',
@@ -505,7 +539,6 @@ def render_dispatch_settings():
                        '雲端版或尚未架設時請選「雲端 Render」，否則交通時間會算不出來。')
         _host = _OSRM_CHOICES[st.session_state['osrm_source_choice']]
         st.caption(f"機車路網連線：{_host}（{'外部主機' if _osrm_is_remote(_host) else '本機'}）")
-        traffic_wake.panel(_host, 'settings')
         st.checkbox('Google 查無公車／捷運路線時，改用估算（標示為估算）', key='transit_fallback_enabled',
                     help='短程（約 1～3 公里）常查不到公車／捷運路線，大眾運輸居服員會因此被判「無法取得交通時間」。'
                          '開啟後：直線 2 公里內以步行估算；更遠以機車路網時間×1.5＋候車 10 分鐘估算，並在逐段交通的「交通估算來源」標明。')
@@ -517,7 +550,8 @@ def render_dispatch_settings():
                 st.caption('Google 金鑰：已讀取設定（未驗證 API 權限）。')
             else:
                 st.warning('未讀到 Google 金鑰：本機請檢查 .streamlit/secrets.toml；雲端請檢查 Manage app → Settings → Secrets 的 GOOGLE_MAPS_API_KEY。')
-    with _rule_col.container(border=True):
+    st.divider()
+    if True:
         st.markdown('**📏 排班規則及限制條件**')
         st.slider("任務間轉場緩衝時間（分鐘）", 0.0, 60.0, step=1.0, key="cfg_buffer_mins",
                   help="兩個服務任務之間，除實際交通時間外額外預留的緩衝時間，用於停車、步行、上下樓、門禁、服務紀錄及臨時延誤。")
@@ -536,6 +570,13 @@ def render_dispatch_settings():
             st.info('資格直接讀取員工「取得資格」。個案「是否失智」填是／否；BA08須有足部照護訓練。歷史首選填員工編號，匯入後直接沿用；年資由到職日計算作為加分。')
             st.caption('難度規則為機構參考：核定等級與失能／障礙程度取最大係數；身障類別只提供提示。')
             st.caption('SA10全部自費，一單位以350元估價；其餘項目依Service_code單價。服務薪資自動依機構時薪、轉場工資與加班制度估算。')
+
+
+_rules_changed = any(st.session_state.get(_k) != _SETTING_DEFAULTS.get(_k)
+                     for _k in ('cfg_buffer_mins', 'cfg_travel_penalty_weight', 'osrm_source_choice', 'google_query_limit'))
+with _sidebar_rules.expander('⚙️ 排班規則設定' + ('　· 已調整' if _rules_changed else ''), expanded=False):
+    st.caption('修改後需重新排班；已產生的班表會被清除。')
+    render_dispatch_settings()
 
 config = PipelineConfig(
 
@@ -770,6 +811,7 @@ try:
                              target=M_IMPORT, button='前往「01 資料匯入與排班設定」')
             with _sidebar_status:
                 st.markdown('<div class="cf-status">尚未匯入資料</div>', unsafe_allow_html=True)
+            _draw_stepper(has_data=False)
             st.stop()
         # 排班期間：值保存在 session（換頁不會遺失）；元件只在 01 模組顯示。
         period = st.session_state.get('agency_period') or '一個月'
@@ -792,6 +834,7 @@ try:
             if _module != M_IMPORT:
                 module_header(_module)
             st.error('日期範圍需為1～366天，結束日不得早於開始日。' + ('' if _module == M_IMPORT else '請到「01 資料匯入與排班設定」修正排班期間。'))
+            _draw_stepper(has_data=bool(st.session_state.get('_data_source_key')))
             st.stop()
         available_start=pd.Timestamp('08:00').time()
         available_end=pd.Timestamp('21:00').time()
@@ -828,8 +871,6 @@ try:
                 ('交通路網連線正常' if _route_ok else '交通路網喚醒中',
                  '機車路網＋大眾運輸路線查詢可用' if _route_ok else '雲端主機開機約 1～3 分鐘，可先檢查資料與設定', _route_ok),
             ])
-            st.button('✅ 資料讀取完成，前往「02 智慧排班作業」開始排班 →', key='import_go_schedule', type='primary',
-                      on_click=go_to_module, args=(M_SCHEDULE,), width='stretch')
             if not sheets['Import_Issues'].empty:
                 st.warning('以下資料需補正；缺鍵、無效服務列不產生任務，重疊服務任務保留但暫不派單。')
                 show_table(sheets['Import_Issues'],hide_index=True,width='stretch')
@@ -840,6 +881,7 @@ try:
                         f'🗓️ {len(sheets["Tasks"]):,} 筆服務</div>', unsafe_allow_html=True)
 except Exception as exc:
     st.error('資料匯入失敗：'+str(exc))
+    _draw_stepper(has_data=False)
     st.stop()
 
 # 個資保護：姓名對照直接從同一份 6-sheet Excel 載入。
@@ -912,6 +954,8 @@ if st.session_state.get("_data_source_key") != source_key:
 
     st.session_state["tasks_sheet_name"] = tasks_sheet_name
 
+_draw_stepper(has_data=True)
+
 _file_hash = session_store.file_key(_agency_bytes)
 if st.session_state.get('last_result') is not None:
     st.session_state['_restore_offer_done'] = True
@@ -930,9 +974,8 @@ elif not st.session_state.get('_restore_offer_done'):
 # ==========================================
 
 if _module == M_IMPORT:
-    render_dispatch_settings()
     subhead('確認排班資料')
-    st.caption('需要調整時，展開下方資料表直接編輯；資料或規則修改後，需回到「02 智慧排班作業」重新排班。')
+    st.caption('需要調整時，展開下方資料表直接編輯；交通方式與排班規則在左側「⚙️ 排班規則設定」。資料或規則修改後需重新排班。')
     with st.expander('服務碼組合檢查與提醒', expanded=False):
 
         st.caption(
@@ -1098,7 +1141,9 @@ if _module == M_IMPORT:
             st.caption('機構資料採已提供服務分鐘，不用未核定的Master覆蓋。此處保留服務碼清單；原版資料仍可依Master計算。')
 
             render_editable_sheet("edit_service_code")
-    module_nav_buttons(M_IMPORT)
+    step_action_bar(M_IMPORT, '下一步：開始排班 →', target=M_SCHEDULE,
+                    hint=f"資料已讀取：{len(st.session_state['edit_cg']):,} 位居服員 · {len(st.session_state['edit_cl']):,} 位個案 · "
+                         f"{len(st.session_state['edit_tasks']):,} 筆服務")
 
 
 def build_previous_week_assignment_map_from_csv(uploaded_file):
@@ -1168,9 +1213,14 @@ def _current_input_signature():
 
 _live_signature = _current_input_signature()
 if 'last_result' in st.session_state and st.session_state['last_result'].get('input_signature') != _live_signature:
-    st.warning('資料或排班參數已修改，請重新執行；舊派單結果已清除。')
     st.session_state.pop('last_result',None)
     st.session_state.pop('overrides',None)
+    st.session_state['_result_stale'] = True
+    if _module in (M_ISSUES, M_REVIEW, M_ANALYTICS):      # 後面的步驟重新上鎖，退回「開始排班」
+        st.session_state['cf_module'] = M_SCHEDULE
+    st.rerun()
+if st.session_state.get('_result_stale') and _module in (M_IMPORT, M_SCHEDULE):
+    st.warning('⚠️ 資料或排班規則已修改，舊班表已清除；請到「② 開始排班」重新排班。')
 
 
 _workflow_store = WorkflowStore(config.institution_key)
@@ -1281,8 +1331,9 @@ if _module == M_SCHEDULE:
                         worker_workday_seed=_consecutive_seed)
                     st.session_state['_routine_templates']={'signature':_routine_signature,'templates':period_result['_day_templates']}
                     # 批次完成即寫回持久帳本，供下一次（含跨月）排班回溯「連續上班天數」。
-                    if not period_result['df_result'].empty:
-                        _workflow_store.record_workdays(zip(period_result['df_result']['派單居服員'], period_result['df_result']['排班日期']))
+                    # 以本期間的新班表「覆寫」該期間紀錄，舊的（重新排班前的）上班日不再殘留。
+                    _workflow_store.replace_workdays(zip(period_result['df_result']['派單居服員'], period_result['df_result']['排班日期'])
+                                                     if not period_result['df_result'].empty else [], range_start, range_end)
                     _moved = period_result.get('time_shifts')
                     if _moved is not None and not _moved.empty:
                         _new_times = _moved.set_index('任務ID')
@@ -1812,11 +1863,11 @@ if "last_result" in st.session_state:
         st.session_state['cf_module'] = M_ISSUES
         st.session_state['cf_issue_view'] = '未派案家與替代方案'
 
-    def _issue_go_button(key):
+    def _issue_go_button(key, primary=True):
         _open = len(_pending_clients) + _review_needed
         if _open:
             st.button(f"🧩 前往未排案家處理 →　{len(_pending_clients)} 個案家未排完" + (f"、{_review_needed} 筆已派需覆核" if _review_needed else ''),
-                      key=key, on_click=_go_pending, type='primary', width='stretch')
+                      key=key, on_click=_go_pending, type='primary' if primary else 'secondary', width='stretch')
         else:
             st.success('沒有未派服務，也沒有需要覆核的衝突。')
 
@@ -1832,7 +1883,6 @@ if "last_result" in st.session_state:
         result_hero(_hero_title, total_tasks, assigned_count, assign_rate, len(_pending_clients),
                     avg_transition if travel_complete else None)
         family_heading(len(_pending_clients))
-        _issue_go_button('schedule_go_issues')
         _render_schedule_notes(collapsed=True)
     elif _module == M_REVIEW:
         module_header(M_REVIEW)
@@ -1842,16 +1892,18 @@ if "last_result" in st.session_state:
         module_header(M_ISSUES)
         _n_unassigned = total_tasks - assigned_count
         _tone = lambda n, bad='bad': bad if n else 'good'
-        kpi_cards([
-            dict(label='未成功派班', value=f'{_n_unassigned:,}', unit='筆', tone=_tone(_n_unassigned), sub=f'{len(_pending_clients)} 個案家待處理',
-                 help='尚未排入班表的服務；下方「未派案家與替代方案」逐案處理。'),
-            dict(label='🔴 班次重疊', value=f"{_issue_count('班次重疊'):,}", unit='筆', tone=_tone(_issue_count('班次重疊')), sub='同一人時段重疊'),
-            dict(label='🔴 交通轉場不足', value=f"{_issue_count('轉場不足'):,}", unit='筆', tone=_tone(_issue_count('轉場不足')), sub='空檔不足或交通待確認'),
-            dict(label='🟡 證照資格不符', value=f"{_issue_count('條件不符'):,}", unit='筆', tone=_tone(_issue_count('條件不符'), 'warn'), sub='證照、資格期限、服務星期'),
-            dict(label='🟠 工時與休息', value=f"{_issue_count('工時與休息'):,}", unit='筆', tone=_tone(_issue_count('工時與休息'), 'warn'), sub='每日工時、休息、連續上班'),
-        ])
+        # 收件匣版：5 張 KPI 卡改成一列精簡標籤；細項在「衝突與條件明細」。
+        _issue_n = {name: _issue_count(name) for name in ('班次重疊', '轉場不足', '條件不符', '工時與休息')}
+        badges([(f'未成功派班 {_n_unassigned:,} 筆', 'red' if _n_unassigned else 'green'),
+                (f"🔴 班次重疊 {_issue_n['班次重疊']:,}", 'red' if _issue_n['班次重疊'] else 'slate'),
+                (f"🔴 轉場不足 {_issue_n['轉場不足']:,}", 'red' if _issue_n['轉場不足'] else 'slate'),
+                (f"🟡 證照資格 {_issue_n['條件不符']:,}", 'amber' if _issue_n['條件不符'] else 'slate'),
+                (f"🟠 工時與休息 {_issue_n['工時與休息']:,}", 'amber' if _issue_n['工時與休息'] else 'slate')])
         _issue_views = ['未派案家與替代方案', '衝突與條件明細', '臨時異動']
-        _issue_view = big_tabs(_issue_views, 'cf_issue_view', icons=['🧩', '🔍', '⚡'])
+        _conflict_total = int(_issue_table[['已派需覆核', '未派服務']].sum(axis=1).sum()) if not _issue_table.empty else 0
+        _issue_view = big_tabs(_issue_views, 'cf_issue_view', icons=['🧩', '🔍', '⚡'],
+                               suffixes=[f'{len(_pending_clients)} 案' if len(_pending_clients) else '✓',
+                                         f'{_conflict_total:,} 筆' if _conflict_total else '', ''])
         if _issue_view == '衝突與條件明細':
             st.caption('依問題類型整理；「已派需覆核」是已在班表上但需要居督確認的服務，「未派服務」是尚未排入的服務。')
             show_table(_issue_table, hide_index=True, width='stretch',
@@ -2021,9 +2073,6 @@ if "last_result" in st.session_state:
                 if all(_bg_state(_c, _w) in ('done', 'error') for _c, _w in _bg_pending):
                     st.session_state['_pending_timer'] = False
                     st.rerun()
-            _has_pending = not _pending_clients.empty
-            _panel_title = (f'未派案家 · {len(_pending_clients)} 個案家待整案處理' if _has_pending
-                            else '整案調整（進階）· 目前沒有未派案家，仍可重新安排任何案家')
             def _edit_apply_many(case, applies):
                 """按鈕回呼：把一個方案（一到數個調整）記到這個案家的調整清單。"""
                 store = st.session_state.setdefault('pending_edits', {})
@@ -2106,69 +2155,82 @@ if "last_result" in st.session_state:
                     + " 固定人選已更新。調整只存在這次操作中，要長期保留請下載「整案調整紀錄」並同步修改 Excel。")
                 st.rerun()
 
-            with st.expander(_panel_title, expanded=_has_pending):
-                _done_cases = sorted({str(r.get('案號')) for r in (res.get('whole_client_log') or [])})
-                if _done_cases:
-                    st.success('本次已處理完成的案家：' + '、'.join(client_label(c) for c in _done_cases) + '（已寫入班表，不會再出現在待處理清單）')
-                if _has_pending:
-                    family_heading(len(_pending_clients))
-                    st.caption('系統已替每個案家用同一套規則（資格、時段、交通、休息、連續工作、月工時）逐項試算過。'
-                               '點「處理這一案」→ 選一個建議方案 → 確認寫入，就會從這份清單消失。')
-                    _rows_pending = _pending_clients.to_dict('records')
+            _done_cases = sorted({str(r.get('案號')) for r in (res.get('whole_client_log') or [])} - set(_pending_clients['案家ID'].astype(str)))
+            _rows_pending = _pending_clients.to_dict('records')
+            _pending_ids = [str(r['案家ID']) for r in _rows_pending]
+            _all_cases = sorted(set(df_tasks['案家ID'].astype(str)))   # 只列有服務任務的案家（沒有任務的案家無從安排）
+            if st.session_state.get('pending_client_choice') not in _all_cases:
+                st.session_state['pending_client_choice'] = _pending_ids[0] if _pending_ids else None
+            _chosen_now = str(st.session_state.get('pending_client_choice') or '')
+
+            def _case_status(cid):
+                """收件匣清單用：(狀態 ai／manual／busy／none, 第一個原因 badge, 一句原因)。"""
+                own = str(config.client_primary_map.get(cid) or '')
+                hit = _cached_analysis(cid, empty_edits(), own) if own else None
+                if hit:
+                    first = hit['diag'][0] if hit['diag'] else None
+                    badge = reason_badge(first['原因'], first.get('類別')) if first else None
+                    why = f"{first['時段']}：{_label_ids(first['原因'])}" if first else ''
+                    return ('ai' if hit['plans'] else 'manual'), badge, why
+                stt = ('running' if _bg_state(cid, own) == 'none' else _bg_state(cid, own)) if own else 'none'
+                return ('busy' if stt == 'running' else 'none'), None, ''
+
+            def _pick_other_case():
+                if st.session_state.get('inbox_other_case'):
+                    _choose_case(st.session_state['inbox_other_case'])
+
+            # ───────── 收件匣：左＝待處理清單，右＝選中案家的處理區 ─────────
+            _total_cases = len(_pending_ids) + len(_done_cases)
+            if _total_cases:
+                st.markdown(f"<div class='cf-inbox-progress'><b>剩 {len(_pending_ids)}</b> / {_total_cases} 個案家待處理"
+                            + (f"　·　已處理 {len(_done_cases)} 個" if _done_cases else '') + '</div>', unsafe_allow_html=True)
+                st.progress(len(_done_cases) / _total_cases)
+            _left, _right = st.columns([1, 2.15], gap='large')
+            with _left:
+                if _pending_ids:
+                    _status_all = {cid: _case_status(cid) for cid in _pending_ids}
+                    _filter = st.segmented_control('篩選', ['全部', '✨ 有建議', '⚠️ 需人工判斷'], key='inbox_filter',
+                                                   default='全部', label_visibility='collapsed') or '全部'
+                    _shown = [r for r in _rows_pending if _filter == '全部'
+                              or (_filter == '✨ 有建議' and _status_all[str(r['案家ID'])][0] == 'ai')
+                              or (_filter == '⚠️ 需人工判斷' and _status_all[str(r['案家ID'])][0] == 'manual')]
                     if _bg_busy:
-                        st.caption('⏳ 系統正在背景分析（一次一個案家）；算好的會自動換成原因與建議，這段時間你可以先看班表、做別的事。')
-                    _chosen_now = str(st.session_state.get('pending_client_choice') or '')
-                    # 方案 C：每個未派案家一張大字卡片（3 欄），白話原因＋AI 建議＋一顆主要按鈕。
-                    _case_cols = st.columns(3, gap='medium')
-                    for _ri, _r in enumerate(_rows_pending):
+                        st.caption('⏳ 背景分析中，算好的案家會自動顯示原因與建議。')
+                    if not _shown:
+                        st.caption('這個篩選下沒有案家。')
+                    for _r in _shown:
                         _cid = str(_r['案家ID'])
-                        _own = str(config.client_primary_map.get(_cid) or '')
-                        _hit = _cached_analysis(_cid, empty_edits(), _own) if _own else None
-                        with _case_cols[_ri % 3].container(border=True, key=f'cfcase_{_cid}'):
-                            st.markdown(f"<div class='cf-case-name'>{html.escape(client_label(_cid))}</div>"
-                                        f"<div class='cf-case-meta'>未派 {int(_r['未派服務數'])}／{int(_r['全部服務數'])} 次"
-                                        + (f"　·　固定居服員 {html.escape(caregiver_label(_own))}" if _own else '　·　尚未指定固定居服員') + "</div>",
+                        _kind, _badge, _why = _status_all[_cid]
+                        _sel = _chosen_now == _cid
+                        _icon = {'ai': '✨', 'manual': '⚠️', 'busy': '⏳'}.get(_kind, '•')
+                        with st.container(key=f"cfinbox_{'sel' if _sel else 'item'}_{_cid}"):
+                            _tag = (f"<span class='cf-badge {html.escape(_badge[1])}'>{html.escape(_badge[0])}</span>" if _badge else '')
+                            _why_text = _why or str(_r.get('未派原因') or '待核對')
+                            st.markdown(f"<div class='cf-inbox-name'>{_icon} {html.escape(client_label(_cid))}</div>"
+                                        f"<div class='cf-inbox-meta'>未派 {int(_r['未派服務數'])}／{int(_r['全部服務數'])} 次　{_tag}</div>"
+                                        f"<div class='cf-inbox-why'>{html.escape(_why_text[:60] + ('…' if len(_why_text) > 60 else ''))}</div>",
                                         unsafe_allow_html=True)
-                            if _hit:
-                                badges(list(dict.fromkeys(reason_badge(_g['原因'], _g.get('類別')) for _g in _hit['diag'])))
-                                for _g in _hit['diag'][:1]:
-                                    st.markdown(f"<div class='cf-case-why'>{html.escape(_g['時段'])}：{html.escape(_label_ids(_g['原因']))}"
-                                                f"（{_g['次數']} 次）</div>", unsafe_allow_html=True)
-                                if _hit['plans']:
-                                    _top = _hit['plans'][0]
-                                    _tags = ''.join(time_shift_html(_st.get('標題')) for _st in _top.get('步驟', []))
-                                    st.markdown(f"<div class='cf-case-tip'><b>✨ AI 建議：</b>{html.escape(_label_ids(_top['標題']))}"
-                                                + (f"<div style='margin-top:6px'>{_tags}</div>" if _tags else '')
-                                                + ('<div>✅ 套用後全部排進</div>' if _top['仍未派'] == 0 else f"<div>⚠️ 套用後仍剩 {_top['仍未派']} 次</div>")
-                                                + "</div>", unsafe_allow_html=True)
-                                else:
-                                    st.markdown("<div class='cf-case-tip'>⚠️ 目前找不到單一方案（人力或規則限制），點進去看詳情與補救方向。</div>",
-                                                unsafe_allow_html=True)
-                            else:
-                                _stt = ('running' if _bg_state(_cid, _own) == 'none' else _bg_state(_cid, _own)) if _own else 'none'
-                                st.markdown(f"<div class='cf-case-why'>{'⏳ 分析中…　' if _stt == 'running' else ''}"
-                                            f"{html.escape(str(_r.get('未派原因') or '待核對'))}</div>", unsafe_allow_html=True)
-                                if _stt != 'running':
-                                    st.caption('點「處理這一案」後會算出原因與建議。')
-                            st.button('處理中 ▸' if _chosen_now == _cid else '處理這一案 →', key=f'pending_card_{_cid}', on_click=_choose_case, args=(_cid,),
-                                      disabled=_chosen_now == _cid, type='secondary' if _chosen_now == _cid else 'primary', width='stretch')
+                            st.button('● 處理中' if _sel else '開啟 ▸', key=f'pending_card_{_cid}', on_click=_choose_case, args=(_cid,),
+                                      disabled=_sel, width='stretch')
+                else:
+                    st.success('🎉 未派案家已全部處理完成')
+                for _cid in _done_cases:
+                    st.markdown(f"<div class='cf-inbox-done'>✓ {html.escape(client_label(_cid))}　已寫入班表</div>", unsafe_allow_html=True)
+                st.divider()
+                _others = [c for c in _all_cases if c not in set(_pending_ids)]
+                if _others:
+                    st.caption('重新安排已排好的案家（前後移時間、拆成兩段、換人）：')
+                    st.selectbox('其他案家', _others, index=None, placeholder='選一個已排班的案家…', format_func=client_label,
+                                 key='inbox_other_case', label_visibility='collapsed', on_change=_pick_other_case)
+                if _pending_ids:
                     download_button_quiet('下載未派案家清單 CSV', export_frame(_pending_clients).to_csv(index=False).encode('utf-8-sig'),
                                           '未派案家清單.csv', 'text/csv', key='download_pending_clients')
-                else:
-                    st.success('🎉 目前沒有未派案家。若想重新安排某個案家（例如前後移時間、拆成兩段），勾選下面「也列出已排班的案家」。')
-
-                st.markdown('##### ② 選擇要處理的案家（也可以直接按上面卡片的「處理這一案」）')
-                _show_all = st.checkbox('也列出已排班的案家（重新安排整案、拆成兩段、前後移動時間）', value=not _has_pending,
-                                        key='pending_show_all', disabled=not _has_pending)
-                _case_options = _pending_clients['案家ID'].astype(str).tolist() if _has_pending else []
-                if _show_all or not _has_pending:
-                    _case_options += [c for c in sorted(res['df_cl']['案家ID'].astype(str)) if c not in set(_case_options)]
-                if not _case_options:
-                    st.info('目前沒有案家資料。')
+            with _right:
+                _case = st.session_state.get('pending_client_choice')
+                if not _case:
+                    st.info('👈 從左邊選一個案家開始處理。')
                     return
-                if st.session_state.get('pending_client_choice') not in _case_options:
-                    st.session_state['pending_client_choice'] = _case_options[0]
-                _case = st.selectbox('案家', _case_options, format_func=lambda v: client_label(v), key='pending_client_choice')
+                _case = str(_case)
                 _edits_all = st.session_state.setdefault('pending_edits', {})
                 _edits = _edits_all.setdefault(str(_case), empty_edits())
                 _unit_minutes = unit_minutes_from_master(st.session_state.get('edit_service_code'))
@@ -2188,6 +2250,7 @@ if "last_result" in st.session_state:
                     _need_chips.append('需重度移位體力')
                 if _need['dementia']:
                     _need_chips.append('失智個案')
+                st.markdown(f"<div class='cf-case-name'>{html.escape(client_label(_case))}</div>", unsafe_allow_html=True)
                 chips(_need_chips, 'mint')
                 _why = {cert: '、'.join(reasons) for cert, reasons in _need['certs'].items()}
                 st.caption(
@@ -2208,7 +2271,6 @@ if "last_result" in st.session_state:
                 _plabel = {str(r['模式ID']): f"{r['星期'].replace('星期', '每週')} {r['開始時間']}～{r['結束時間']}"
                            for r in _base_rows.to_dict('records')}
                 _worker0 = _case_owner or next((str(r['居服員ID']) for _, r in _screen.iterrows() if r['_ok'] > 0), '')
-                st.markdown(f'##### ③ 處理：{client_label(_case)}')
                 _state = None
                 if not _worker0:
                     st.warning('這個案家還沒有固定居服員，也沒有資格符合的人；請展開最下方「進階」或補充人力。')
@@ -2222,25 +2284,25 @@ if "last_result" in st.session_state:
                         st.info('⏳ 這個案家正在背景分析原因與解法，算好會自動顯示（通常幾秒到十幾秒）；期間可以先看上面的班表。')
                 if _state is not None:
                     _pv = _state['preview']
-                    _m1, _m2, _m3 = st.columns(3)
-                    _m1.metric('這案服務筆數', _pv['total'], help='拆成兩段後，每一段各算一筆。')
-                    _m2.metric('目前可排進', len(_pv['accepted']))
-                    _m3.metric('排不進', len(_pv['failed']))
+                    badges([(f"這案共 {_pv['total']} 筆", 'slate'), (f"可排進 {len(_pv['accepted'])} 筆", 'green'),
+                            (f"排不進 {len(_pv['failed'])} 筆", 'red' if len(_pv['failed']) else 'green')])
                     _who_now = _pv['accepted']['派單居服員'].astype(str).value_counts()
                     if len(_who_now):
                         st.caption('目前各人承接：' + '；'.join(f'{caregiver_label(str(w))} {n} 筆' for w, n in _who_now.items()))
                     if _pv['failed'].empty:
-                        st.success('✅ 整案全部排得進去。' + ('確認沒問題就按下方「確認寫入班表」。' if _edits_has_any(_edits) else '（這個案家不需要處理；若想調整時間或分段，用下方「我想自己調整」。）'))
+                        subhead('① 問題是什麼')
+                        st.success('✅ 整案全部排得進去。' + ('確認沒問題就按下方「確認寫入班表」。' if _edits_has_any(_edits) else '（這個案家不需要處理；若想調整時間或分段，用下方「③ 自己處理」。）'))
                     else:
-                        st.markdown('**❗ 哪裡排不進、為什麼**')
+                        subhead('① 問題是什麼')
                         for _g in _state['diag']:
                             with st.container(border=True):
                                 badges([reason_badge(_g['原因'], _g.get('類別')), (f"{_g['次數']} 次排不進", 'slate')])
                                 st.markdown(f"**{_g['時段']}**（{'、'.join(_g['日期'])}）")
                                 st.caption('原因：' + _label_ids(_g['原因']) + '　·　可以怎麼做：' + _g['方向'])
-                        st.markdown('**✨ AI 建議方案**（每個方案都已用完整規則驗證過）')
+                        subhead('② 系統建議')
+                        st.caption('每個方案都已用完整規則（資格、時段、交通、休息、工時）驗證過；最多列出 3 個。')
                         if _state['plans']:
-                            for _i, _p in enumerate(_state['plans']):
+                            for _i, _p in enumerate(_state['plans'][:3]):
                                 with st.container(border=True, key=f'cfplan_{_case}_{_i}'):
                                     _shift_tags = ''.join(time_shift_html(_st.get('標題')) for _st in _p.get('步驟', []))
                                     st.markdown(f"<span class='cf-badge ai'>✨ 方案 {_i + 1}</span>　<b style='font-size:20px'>{html.escape('＋'.join(_p['種類']))}</b>"
@@ -2262,7 +2324,7 @@ if "last_result" in st.session_state:
                             st.caption('・' + _label_ids(_line))
                         st.button('↩️ 全部重來', key=f'pending_edit_clear_{_case}', on_click=_edit_clear, args=(_case,))
                     if len(_pv['accepted']):
-                        st.markdown('**④ 確認寫入班表**')
+                        st.markdown('**確認寫入班表**')
                         _simple_reason = reason_picker(f'pending_simple_reason_{_case}', '修改原因（必選，會寫進調整紀錄）')
                         _kinds_used = bool(_edits.get('shifts') or _edits.get('moves') or _edits.get('splits'))
                         _people_changed = bool(_edits.get('pattern_workers') or _edits.get('workers') or _edits.get('splits'))
@@ -2281,246 +2343,249 @@ if "last_result" in st.session_state:
                         st.caption('寫入後：這案服務變成「已派」，上方待處理清單與未派數字立刻更新。調整只存在這次操作中（重新按「開始排班」會從 Excel 重算），'
                                    '所以請同步下載最下方「整案調整紀錄」，照它修改 Excel。')
 
-                with st.expander('✋ 我想自己調整（時間前後移、拆成兩段）— 系統沒建議、或想用自己的方式', expanded=False):
-                    _edit_pid = st.selectbox('要調整哪個每週固定時段', list(_plabel), format_func=lambda p: _plabel.get(p, p), key=f'pending_edit_pid_{_case}')
-                    _sample = next((t for t in _client_tasks.to_dict('records') if pattern_token(t) == _edit_pid), None)
-                    _col_shift, _col_split = st.columns(2)
-                    with _col_shift:
-                        st.markdown('**⏱️ 整個時段前後移（服務分鐘不變）**')
-                        _step = int(st.number_input('移動幾分鐘', min_value=5, max_value=240, value=30, step=5, key=f'pending_edit_step_{_case}'))
-                        _b1, _b2 = st.columns(2)
-                        _b1.button(f'後移 {_step} 分', key=f'pending_edit_later_{_case}', on_click=_edit_apply,
-                                   args=(_case, {'type': 'shift', 'pid': _edit_pid, 'minutes': _step}))
-                        _b2.button(f'前移 {_step} 分', key=f'pending_edit_earlier_{_case}', on_click=_edit_apply,
-                                   args=(_case, {'type': 'shift', 'pid': _edit_pid, 'minutes': -_step}))
-                        st.caption('例如 15:30～17:30 後移 30 分 → 16:00～18:00，仍是 120 分鐘。每次按都會累加，按完上方會立刻重新試算。')
-                    with _col_split:
-                        st.markdown('**✂️ 每次都拆成兩段，各自指派**')
-                        _points = []
-                        if _sample is not None:
-                            try:
-                                _points = split_points(pd.Series(_sample), _unit_minutes)
-                            except ValueError as exc:
-                                st.caption(f'無法拆段：{exc}')
-                        if _points and _edit_pid in (_edits.get('splits') or {}):
-                            st.caption('這個時段已拆成兩段；若要重拆，請先按上方「全部重來」。')
-                        elif _points:
-                            _total = int(round(float(_sample['服務歷時(分鐘)'])))
-                            _dflt = default_split_minutes(pd.Series(_sample), _unit_minutes)
-                            _first = st.selectbox('第一段長度', _points, index=_points.index(_dflt),
-                                                  format_func=lambda m: f'第一段 {m} 分｜第二段 {_total - m} 分', key=f'pending_edit_first_{_case}_{_edit_pid}')
-                            _owner_now = (_edits.get('pattern_workers') or {}).get(_edit_pid) or _worker0
-                            _first_pick = st.selectbox('第一段負責居服員', _case_people, index=_case_people.index(_owner_now) if _owner_now in _case_people else 0,
-                                                       format_func=caregiver_label, key=f'pending_edit_firstw_{_case}_{_edit_pid}')
-                            _second_default = next((x for x in _case_people if x != _first_pick), _first_pick)
-                            _second = st.selectbox('第二段負責居服員', _case_people, index=_case_people.index(_second_default),
-                                                   format_func=caregiver_label, key=f'pending_edit_second_{_case}_{_edit_pid}')
-                            _gap = 30 if _second == _first_pick else 0
-                            st.caption('兩段同一位居服員：中間自動休息 30 分（整體結束時間延後 30 分）。' if _gap else '兩位各做一段：不必休息，原時段完整保留。')
-                            st.button('✂️ 拆成兩段', key=f'pending_edit_split_{_case}_{_edit_pid}', on_click=_edit_apply,
-                                      args=(_case, {'type': 'split', 'pid': _edit_pid, 'first': int(_first), 'gap': _gap,
-                                                    'first_worker': _first_pick, 'second_worker': _second}))
-
-                with st.expander('🔧 進階：自己挑人、逐位檢查、分給兩位以上（一般不需要打開）', expanded=False):
-                    st.markdown('##### 進階 A．誰符合？逐位檢查資格')
-                    _ok_total = int((_screen['結論'] == '✅ 資格全符合').sum())
-                    st.caption(f"{len(_screen)} 位居服員中，{_ok_total} 位「資格」全部符合（證照、可排班星期、可服務時段、性別、體力、請假）。"
-                               "接著要看與其他案家的時間衝突、休息、每日工時與月加班，請按下方「完整試算」。")
-                    _table_cols = ['居服員ID', '結論', '資格可排', '證照／訓練', '排班日', '可服務時段', '性別／體力／環境', '請假／到期',
-                                   '本月已排(時)', '加上此案(時)', '住家距離(公里)', '與此案關係']
-                    show_table(_screen[_table_cols].rename(columns={'居服員ID': '居服員'}), hide_index=True, width='stretch',
-                               column_config={
-                                   '證照／訓練': st.column_config.TextColumn(width='medium'),
-                                   '排班日': st.column_config.TextColumn(width='medium'),
-                                   '可服務時段': st.column_config.TextColumn(width='medium'),
-                                   '本月已排(時)': st.column_config.NumberColumn(help='目前已排給這位居服員的服務時數（不含轉場）'),
-                                   '加上此案(時)': st.column_config.NumberColumn(help='接手整案後的服務時數；是否超過加班上限，請看下方完整試算'),
-                                   '住家距離(公里)': st.column_config.NumberColumn(help='居服員住家到案家的直線距離'),
-                               })
-                    _blocked = _screen[_screen['阻擋原因'].ne('—')]
-                    if not _blocked.empty:
-                        with st.expander(f'查看 {len(_blocked)} 位居服員「不符合」的具體原因與次數'):
-                            show_table(_blocked[['居服員ID', '結論', '資格可排', '阻擋原因']].rename(columns={'居服員ID': '居服員'}),
-                                       hide_index=True, width='stretch')
-
-                    st.markdown('##### 進階 B．完整試算：加入現有班表後真的排得進嗎？')
-                    _eligible = [str(r['居服員ID']) for _, r in _screen.iterrows() if r['_ok'] > 0]
-                    _cap = max(1, len(_eligible))
-                    if _cap > 1:
-                        _limit = st.slider('試算人數（依資格與距離由近到遠；預設全部資格符合者，避免漏看）', 1, _cap, _cap, key='pending_trial_n')
-                    else:
-                        _limit = 1
-                    _trial_cache = res.setdefault('_trial_cache', {})
-                    _trial_key = (str(_case), route_signature, _limit)
-                    if st.button('🧪 完整試算', key='pending_trial_run', disabled=not _eligible,
-                                 help='逐位用整案預覽核對：同日其他案家、交通與緩衝、連續工作與休息、每日工時、月加班。'):
-                        _rows = []
-                        _months = sorted({str(d)[:7] for d in _client_tasks['日期']})
-                        _default_patterns = client_patterns(df_tasks, _case)
-                        _bar = st.progress(0.0, text='試算中…')
-                        for _n, _worker in enumerate(_eligible[:_limit], start=1):
-                            _bar.progress((_n - 1) / _limit, text=f'試算 {caregiver_label(_worker)}（{_n}/{_limit}）…')
-                            try:
-                                _pv = preview_client_assignment(df_tasks, _operational_assignments, res['df_cg'], res['df_cl'], config,
-                                                                _case, _worker, _default_patterns)
-                                _row = simulate_worker(_pv, dict(config.work_day_minutes), _worker, _months, config)
-                                _row['_accepted'] = frozenset(str(t) for t in _pv['accepted']['任務ID'])
-                            except Exception as exc:
-                                _row = {'居服員ID': _worker, '試算結果': '無法試算', '可安排': 0, '仍未派': _need['visits'],
-                                        '總次數': _need['visits'], '月加班(時)': '—', '主要原因': str(exc)[:80], '_accepted': frozenset()}
-                            _rows.append(_row)
-                        _bar.empty()
-                        _trial_cache.clear()
-                        _trial_cache[_trial_key] = pd.DataFrame(_rows)
-                    _trial = _trial_cache.get(_trial_key)
-                    _total_visits = int(_need['visits'])
-                    _status = worker_status_table(_screen, _trial, _total_visits)
-                    _state_of = dict(zip(_status['居服員ID'], _status['狀態']))
-                    _team_plan = None
-                    if _trial is not None and not _trial.empty:
-                        _best = _trial.sort_values(['可安排'], ascending=False, kind='stable').iloc[0]
-                        if int(_best['可安排']) == int(_best['總次數']):
-                            _full = [str(x) for x in _trial.loc[_trial['可安排'] == _trial['總次數'], '居服員ID']]
-                            st.success(f"{len(_full)} 位居服員可以一個人接下整案全部 {_total_visits} 次：{'、'.join(caregiver_label(x) for x in _full[:6])}"
-                                       + ('…' if len(_full) > 6 else ''))
-                        else:
-                            _plan_key = ('team', str(_case), route_signature, _limit)
-                            _plan_cache = res.setdefault('_team_cache', {})
-                            if _plan_key not in _plan_cache:
-                                with st.spinner('沒有人能一人接下全部，正在組合多位居服員…'):
-                                    _plan_cache.clear()
-                                    _plan_cache[_plan_key] = plan_team(
-                                        df_tasks, _operational_assignments, res['df_cg'], res['df_cl'], config, _case,
-                                        client_patterns(df_tasks, _case),
-                                        {str(r['居服員ID']): set(r['_accepted']) for _, r in _trial.iterrows()}, preferred=str(_best['居服員ID']))
-                            _team_plan = _plan_cache[_plan_key]
-                            if int(_best['可安排']) > 0:
-                                st.warning(f"試算的人選都無法一個人接下全部；單人最多是 {caregiver_label(str(_best['居服員ID']))}，可排 {int(_best['可安排'])}/{_total_visits} 次。"
-                                           + (f" 改由多位分工，系統組合出 {_team_plan['accepted']}/{_team_plan['total']} 次（見下方④）。" if _team_plan['accepted'] > int(_best['可安排']) else ''))
-                            else:
-                                st.error('試算的人選都排不進；請看「主要原因」，或回到上方「③ 處理」用建議方案（前後挪時間、換人、拆成兩段）。')
-                    st.caption('狀態說明：✅ 全部可排　⚠️ 只能排其中幾次　❌ 資格符合但時間排不進　🔘 資格符合、尚未試算　⛔ 資格不符（證照、性別、排班日等）。下方「進階 C」的選單用同一套狀態。')
-                    show_table(_status[['居服員ID', '狀態', '資格', '月加班(時)', '主要原因']].rename(columns={'居服員ID': '居服員', '資格': '資格可排'}),
-                               hide_index=True, width='stretch', column_config={'主要原因': st.column_config.TextColumn(width='large')})
-
-                    st.markdown('##### 進階 C．自己選人（可分給兩位以上），預覽並套用')
-                    _order = [str(x) for x in _status['居服員ID']] + [p for p in _case_people if p not in set(_status['居服員ID'])]
-
-                    def _worker_label(v):
-                        return f"{caregiver_label(v)}　{_state_of.get(v, '')}"
-                    _have_full = _trial is not None and not _trial.empty and bool((_trial['可安排'] == _trial['總次數']).any())
-                    _modes = ['一位居服員包下整案', '分給兩位以上（依下表指定）']
-                    _mode_key = 'pending_mode_' + str(_case)
-                    _has_split = bool(_edits.get('splits') or _edits.get('workers') or _edits.get('pattern_workers'))
-                    _default_multi = (_has_split or (_team_plan is not None and _team_plan['accepted'] > 0 and not _have_full))
-                    _mode = st.radio('安排方式', _modes, index=1 if _default_multi else 0, horizontal=True, key=_mode_key + ('_m' if _default_multi else '_s'))
-                    _multi = _mode == _modes[1] or _has_split
-                    _suggest = _team_plan if (_multi and _team_plan is not None) else None
-                    _main_default = (_suggest['main'] if _suggest and _suggest['main'] else (_order[0] if _order else ''))
-                    _main_options = [x for x in _order if x]
-                    _case_worker = st.selectbox('主責居服員（固定人選）', _main_options, index=_main_options.index(_main_default) if _main_default in _main_options else 0,
-                                                format_func=_worker_label,
-                                                key='pending_client_worker_' + str(_case) + ('_t' if _trial is not None else '_n') + ('_m' if _multi else '_s') + str(_main_default))
-                    _main_state = _state_of.get(_case_worker, '')
-                    if _main_state.startswith('⛔'):
-                        st.error(f"{caregiver_label(_case_worker)} 資格不符，排不進這個案家：{str(_status.loc[_status['居服員ID'] == _case_worker, '主要原因'].iloc[0])}"
-                                 "　（仍可按預覽看逐筆原因，但不會被排入。）")
-                    elif _main_state.startswith('❌'):
-                        st.warning(f"{caregiver_label(_case_worker)} 在目前班表上排不進任何一次；請改選其他人，或調整下表時段。")
-                    _patterns_base = edited_pattern_table(df_tasks, _case, _edits)
-                    _suggest_map = (_suggest or {}).get('pattern_workers', {})
-
-                    def _default_worker(pid):
-                        base = pid.split('#')[0]
-                        if '#' in pid:
-                            split = _edits['splits'].get(base, {})
-                            picked = split.get('second_worker') if pid.endswith('#2') else split.get('first_worker')
-                            if picked:
-                                return picked
-                        return ((_edits.get('pattern_workers') or {}).get(pid)
-                                or ((_suggest_map.get(pid) or _suggest_map.get(base)) if _multi else None) or _case_worker)
-                    _patterns_base['負責居服員'] = [_default_worker(str(t)) for t in _patterns_base['模式ID']]
-                    _editor_key = (f"pending_client_patterns_{_case}_{_mode_key}_{_case_worker}_{abs(hash(tuple(sorted(_suggest_map.items()))))}"
-                                   f"_{abs(hash(repr(_edits)))}")
-                    if _multi:
-                        st.caption('每一列是一個每週固定時段；在「負責居服員」欄指定誰來做（可全部同一人，也可分給不同人）。可修改開始／結束時間（維持服務分鐘）。')
-                    else:
-                        st.caption('所有星期與時段固定同一人；可修改下表起訖時間（維持服務分鐘）。')
-                    _case_patterns = st.data_editor(
-                        _patterns_base, hide_index=True, width='stretch', disabled=['模式ID', '來源列', '星期', '服務分鐘', '段'] + ([] if _multi else ['負責居服員']),
-                        column_config={'負責居服員': st.column_config.SelectboxColumn('負責居服員', options=_main_options, required=True,
-                                                                                  help='資格不符或排不進的人不會被排入，預覽會列出原因。')},
-                        key=_editor_key)
-                    _pattern_workers = ({str(r['模式ID']): str(r['負責居服員']) for _, r in _case_patterns.iterrows()}
-                                        if _multi else {})
-
-                    _task_workers = {**(dict((_suggest or {}).get('task_workers', {})) if _multi else {}), **(_edits.get('workers') or {})}
-                    if _task_workers:
-                        with st.expander(f'另有 {len(_task_workers)} 個個別日期由系統建議改派他人（固定時段內少數日期衝突）'):
-                            show_table(pd.DataFrame([{'任務ID': k, '改派給': v} for k, v in sorted(_task_workers.items())]).rename(columns={'改派給': '居服員'}),
-                                       hide_index=True, width='stretch')
-                    _team_set = sorted({_case_worker, *_pattern_workers.values(), *_task_workers.values()})
-                    _bad = [w for w in _team_set if _state_of.get(w, '').startswith('⛔')]
-                    if _bad:
-                        st.error('以下人選資格不符，不會被排入：' + '、'.join(caregiver_label(w) for w in _bad))
-                    _case_reason = reason_picker('pending_client_reason_' + str(_case), '整案安排原因（必選）')
-                    _case_preview_clicked = st.button('預覽整案排班', type='primary', key='pending_preview_btn')
-                    _case_signature = hashlib.sha256(repr((_case, _case_worker, _case_patterns.to_dict('records'), sorted(_task_workers.items()),
-                        _operational_assignments[['任務ID', '派單居服員']].to_dict('records'),
-                        df_tasks.to_dict('records'), res['df_cg'].to_dict('records'),
-                        config.client_primary_map, config.max_monthly_overtime_hours, config.buffer_mins, repr(_edits))).encode()).hexdigest()
-                    if _case_preview_clicked:
-                        try:
-                            with st.spinner('核對整案日期、時段、資格、交通與工時…'):
-                                _preview = preview_client_assignment(df_tasks, _operational_assignments, res['df_cg'],
-                                    res['df_cl'], config, _case, _case_worker, _case_patterns, _pattern_workers, _task_workers,
-                                    splits=_edits.get('splits'), moves=_edits.get('moves'), unit_minutes=_unit_minutes)
-                            st.session_state['pending_client_preview'] = {'signature': _case_signature, 'result': _preview, 'reason': _case_reason or ''}
-                        except Exception as exc:
-                            st.session_state.pop('pending_client_preview', None)
-                            st.error('整案預覽失敗：' + str(exc))
-                    _stored = st.session_state.get('pending_client_preview')
-                    if _stored and _stored['signature'] == _case_signature:
-                        _preview = _stored['result']
-                        _p1, _p2, _p3 = st.columns(3)
-                        _p1.metric('整案服務次數', _preview['total'])
-                        _p2.metric('可安排', len(_preview['accepted']))
-                        _p3.metric('仍未派', len(_preview['failed']))
-                        _who = _preview['accepted']['派單居服員'].astype(str).value_counts()
-                        if len(_who):
-                            st.caption('各人承接：' + '；'.join(f'{caregiver_label(str(w))} {n} 次' for w, n in _who.items()))
-                        _months_now = sorted({str(d)[:7] for d in _client_tasks['日期']})
-                        for _member in sorted(set(_who.index)):
-                            st.caption(f'{caregiver_label(str(_member))} 月加班（接手前→後／上限）：' + month_overtime_summary(
-                                _preview.get('ledger', {}), dict(config.work_day_minutes), str(_member), _months_now, config))
-                        if not _preview['failed'].empty:
-                            _grouped = _preview['failed'].assign(原因分類=_preview['failed']['原因'].map(lambda t: str(t).split('；')[0][:60]))
-                            st.error('以下服務仍排不進去（資格不符、時間衝突、休息或工時超標的人不會被硬排）：')
-                            show_table(_grouped.groupby('原因分類').agg(次數=('任務ID', 'size'), 例如日期=('日期', 'first')).reset_index().sort_values('次數', ascending=False),
-                                       hide_index=True, width='stretch')
-                            with st.expander('逐筆明細'):
-                                show_table(_preview['failed'], hide_index=True, width='stretch')
-                            st.info('建議方案請看上方「③ 處理」區；這裡是進階手動模式：可改選其他主責、在上表改開始時間，或到「02 智慧排班作業」的人工調整，把衝突的既有班改給別人。')
-                        _apply_label = ('套用整案排班' if _preview['failed'].empty else
-                                        f"套用可排的 {len(_preview['accepted'])} 次（其餘 {len(_preview['failed'])} 次仍待處理）")
-                        if st.button(_apply_label, type='primary', key='apply_pending_client',
-                                     disabled=_preview['accepted'].empty):
-                            if not _case_reason:
-                                st.warning(REASON_HINT)
-                            else:
+                subhead('③ 自己處理')
+                with st.expander('✋ 系統沒建議、或想用自己的方式（調整時間、拆段、自己選人）', expanded=False):
+                    _tab_time, _tab_people = st.tabs(['⏱️ 調整時間／拆成兩段', '👥 自己選人：資格 → 試算 → 套用'])
+                    with _tab_time:
+                        _edit_pid = st.selectbox('要調整哪個每週固定時段', list(_plabel), format_func=lambda p: _plabel.get(p, p), key=f'pending_edit_pid_{_case}')
+                        _sample = next((t for t in _client_tasks.to_dict('records') if pattern_token(t) == _edit_pid), None)
+                        if True:
+                            st.markdown('**⏱️ 整個時段前後移（服務分鐘不變）**')
+                            _step = int(st.number_input('移動幾分鐘', min_value=5, max_value=240, value=30, step=5, key=f'pending_edit_step_{_case}'))
+                            _b1, _b2 = st.columns(2)
+                            _b1.button(f'後移 {_step} 分', key=f'pending_edit_later_{_case}', on_click=_edit_apply,
+                                       args=(_case, {'type': 'shift', 'pid': _edit_pid, 'minutes': _step}))
+                            _b2.button(f'前移 {_step} 分', key=f'pending_edit_earlier_{_case}', on_click=_edit_apply,
+                                       args=(_case, {'type': 'shift', 'pid': _edit_pid, 'minutes': -_step}))
+                            st.caption('例如 15:30～17:30 後移 30 分 → 16:00～18:00，仍是 120 分鐘。每次按都會累加，按完上方會立刻重新試算。')
+                        st.divider()
+                        if True:
+                            st.markdown('**✂️ 每次都拆成兩段，各自指派**')
+                            _points = []
+                            if _sample is not None:
                                 try:
-                                    _commit_case(_case, _preview, _case_reason, _edits, main=_case_worker)
+                                    _points = split_points(pd.Series(_sample), _unit_minutes)
+                                except ValueError as exc:
+                                    st.caption(f'無法拆段：{exc}')
+                            if _points and _edit_pid in (_edits.get('splits') or {}):
+                                st.caption('這個時段已拆成兩段；若要重拆，請先按上方「全部重來」。')
+                            elif _points:
+                                _total = int(round(float(_sample['服務歷時(分鐘)'])))
+                                _dflt = default_split_minutes(pd.Series(_sample), _unit_minutes)
+                                _first = st.selectbox('第一段長度', _points, index=_points.index(_dflt),
+                                                      format_func=lambda m: f'第一段 {m} 分｜第二段 {_total - m} 分', key=f'pending_edit_first_{_case}_{_edit_pid}')
+                                _owner_now = (_edits.get('pattern_workers') or {}).get(_edit_pid) or _worker0
+                                _first_pick = st.selectbox('第一段負責居服員', _case_people, index=_case_people.index(_owner_now) if _owner_now in _case_people else 0,
+                                                           format_func=caregiver_label, key=f'pending_edit_firstw_{_case}_{_edit_pid}')
+                                _second_default = next((x for x in _case_people if x != _first_pick), _first_pick)
+                                _second = st.selectbox('第二段負責居服員', _case_people, index=_case_people.index(_second_default),
+                                                       format_func=caregiver_label, key=f'pending_edit_second_{_case}_{_edit_pid}')
+                                _gap = 30 if _second == _first_pick else 0
+                                st.caption('兩段同一位居服員：中間自動休息 30 分（整體結束時間延後 30 分）。' if _gap else '兩位各做一段：不必休息，原時段完整保留。')
+                                st.button('✂️ 拆成兩段', key=f'pending_edit_split_{_case}_{_edit_pid}', on_click=_edit_apply,
+                                          args=(_case, {'type': 'split', 'pid': _edit_pid, 'first': int(_first), 'gap': _gap,
+                                                        'first_worker': _first_pick, 'second_worker': _second}))
+
+                    with _tab_people:
+                        st.markdown('##### 步驟 1．誰符合？逐位檢查資格')
+                        _ok_total = int((_screen['結論'] == '✅ 資格全符合').sum())
+                        st.caption(f"{len(_screen)} 位居服員中，{_ok_total} 位「資格」全部符合（證照、可排班星期、可服務時段、性別、體力、請假）。"
+                                   "接著要看與其他案家的時間衝突、休息、每日工時與月加班，請按下方「完整試算」。")
+                        _table_cols = ['居服員ID', '結論', '資格可排', '證照／訓練', '排班日', '可服務時段', '性別／體力／環境', '請假／到期',
+                                       '本月已排(時)', '加上此案(時)', '住家距離(公里)', '與此案關係']
+                        show_table(_screen[_table_cols].rename(columns={'居服員ID': '居服員'}), hide_index=True, width='stretch',
+                                   column_config={
+                                       '證照／訓練': st.column_config.TextColumn(width='medium'),
+                                       '排班日': st.column_config.TextColumn(width='medium'),
+                                       '可服務時段': st.column_config.TextColumn(width='medium'),
+                                       '本月已排(時)': st.column_config.NumberColumn(help='目前已排給這位居服員的服務時數（不含轉場）'),
+                                       '加上此案(時)': st.column_config.NumberColumn(help='接手整案後的服務時數；是否超過加班上限，請看下方完整試算'),
+                                       '住家距離(公里)': st.column_config.NumberColumn(help='居服員住家到案家的直線距離'),
+                                   })
+                        _blocked = _screen[_screen['阻擋原因'].ne('—')]
+                        if not _blocked.empty:
+                            with st.expander(f'查看 {len(_blocked)} 位居服員「不符合」的具體原因與次數'):
+                                show_table(_blocked[['居服員ID', '結論', '資格可排', '阻擋原因']].rename(columns={'居服員ID': '居服員'}),
+                                           hide_index=True, width='stretch')
+
+                        st.markdown('##### 步驟 2．完整試算：加入現有班表後真的排得進嗎？')
+                        _eligible = [str(r['居服員ID']) for _, r in _screen.iterrows() if r['_ok'] > 0]
+                        _cap = max(1, len(_eligible))
+                        if _cap > 1:
+                            _limit = st.slider('試算人數（依資格與距離由近到遠；預設全部資格符合者，避免漏看）', 1, _cap, _cap, key='pending_trial_n')
+                        else:
+                            _limit = 1
+                        _trial_cache = res.setdefault('_trial_cache', {})
+                        _trial_key = (str(_case), route_signature, _limit)
+                        if st.button('🧪 完整試算', key='pending_trial_run', disabled=not _eligible,
+                                     help='逐位用整案預覽核對：同日其他案家、交通與緩衝、連續工作與休息、每日工時、月加班。'):
+                            _rows = []
+                            _months = sorted({str(d)[:7] for d in _client_tasks['日期']})
+                            _default_patterns = client_patterns(df_tasks, _case)
+                            _bar = st.progress(0.0, text='試算中…')
+                            for _n, _worker in enumerate(_eligible[:_limit], start=1):
+                                _bar.progress((_n - 1) / _limit, text=f'試算 {caregiver_label(_worker)}（{_n}/{_limit}）…')
+                                try:
+                                    _pv = preview_client_assignment(df_tasks, _operational_assignments, res['df_cg'], res['df_cl'], config,
+                                                                    _case, _worker, _default_patterns)
+                                    _row = simulate_worker(_pv, dict(config.work_day_minutes), _worker, _months, config)
+                                    _row['_accepted'] = frozenset(str(t) for t in _pv['accepted']['任務ID'])
                                 except Exception as exc:
-                                    st.error('整案套用失敗：' + str(exc))
-                _log_rows = res.get('whole_client_log') or []
-                if _log_rows:
-                    with st.expander(f'本次整案調整紀錄 · {len(_log_rows)} 筆（可用來同步更新原始 Excel）'):
-                        _log_frame = pd.DataFrame(_log_rows)
-                        _log_frame.insert(0, '#', range(1, len(_log_frame) + 1))
-                        show_table(_log_frame, hide_index=True, width='stretch')
-                        download_button_quiet('下載整案調整紀錄 CSV', _log_frame.to_csv(index=False).encode('utf-8-sig'),
-                                              '整案調整紀錄.csv', 'text/csv', key='download_whole_client_log')
-                        st.caption('原始 Excel 不會被自動改寫；若這些調整要長期保留，請照這份紀錄修改 Excel 後重新匯入。')
+                                    _row = {'居服員ID': _worker, '試算結果': '無法試算', '可安排': 0, '仍未派': _need['visits'],
+                                            '總次數': _need['visits'], '月加班(時)': '—', '主要原因': str(exc)[:80], '_accepted': frozenset()}
+                                _rows.append(_row)
+                            _bar.empty()
+                            _trial_cache.clear()
+                            _trial_cache[_trial_key] = pd.DataFrame(_rows)
+                        _trial = _trial_cache.get(_trial_key)
+                        _total_visits = int(_need['visits'])
+                        _status = worker_status_table(_screen, _trial, _total_visits)
+                        _state_of = dict(zip(_status['居服員ID'], _status['狀態']))
+                        _team_plan = None
+                        if _trial is not None and not _trial.empty:
+                            _best = _trial.sort_values(['可安排'], ascending=False, kind='stable').iloc[0]
+                            if int(_best['可安排']) == int(_best['總次數']):
+                                _full = [str(x) for x in _trial.loc[_trial['可安排'] == _trial['總次數'], '居服員ID']]
+                                st.success(f"{len(_full)} 位居服員可以一個人接下整案全部 {_total_visits} 次：{'、'.join(caregiver_label(x) for x in _full[:6])}"
+                                           + ('…' if len(_full) > 6 else ''))
+                            else:
+                                _plan_key = ('team', str(_case), route_signature, _limit)
+                                _plan_cache = res.setdefault('_team_cache', {})
+                                if _plan_key not in _plan_cache:
+                                    with st.spinner('沒有人能一人接下全部，正在組合多位居服員…'):
+                                        _plan_cache.clear()
+                                        _plan_cache[_plan_key] = plan_team(
+                                            df_tasks, _operational_assignments, res['df_cg'], res['df_cl'], config, _case,
+                                            client_patterns(df_tasks, _case),
+                                            {str(r['居服員ID']): set(r['_accepted']) for _, r in _trial.iterrows()}, preferred=str(_best['居服員ID']))
+                                _team_plan = _plan_cache[_plan_key]
+                                if int(_best['可安排']) > 0:
+                                    st.warning(f"試算的人選都無法一個人接下全部；單人最多是 {caregiver_label(str(_best['居服員ID']))}，可排 {int(_best['可安排'])}/{_total_visits} 次。"
+                                               + (f" 改由多位分工，系統組合出 {_team_plan['accepted']}/{_team_plan['total']} 次（見下方步驟 3）。" if _team_plan['accepted'] > int(_best['可安排']) else ''))
+                                else:
+                                    st.error('試算的人選都排不進；請看「主要原因」，或回到上方「② 系統建議」（前後挪時間、換人、拆成兩段）。')
+                        st.caption('狀態說明：✅ 全部可排　⚠️ 只能排其中幾次　❌ 資格符合但時間排不進　🔘 資格符合、尚未試算　⛔ 資格不符（證照、性別、排班日等）。下方「步驟 3」的選單用同一套狀態。')
+                        show_table(_status[['居服員ID', '狀態', '資格', '月加班(時)', '主要原因']].rename(columns={'居服員ID': '居服員', '資格': '資格可排'}),
+                                   hide_index=True, width='stretch', column_config={'主要原因': st.column_config.TextColumn(width='large')})
+
+                        st.markdown('##### 步驟 3．自己選人（可分給兩位以上），預覽並套用')
+                        _order = [str(x) for x in _status['居服員ID']] + [p for p in _case_people if p not in set(_status['居服員ID'])]
+
+                        def _worker_label(v):
+                            return f"{caregiver_label(v)}　{_state_of.get(v, '')}"
+                        _have_full = _trial is not None and not _trial.empty and bool((_trial['可安排'] == _trial['總次數']).any())
+                        _modes = ['一位居服員包下整案', '分給兩位以上（依下表指定）']
+                        _mode_key = 'pending_mode_' + str(_case)
+                        _has_split = bool(_edits.get('splits') or _edits.get('workers') or _edits.get('pattern_workers'))
+                        _default_multi = (_has_split or (_team_plan is not None and _team_plan['accepted'] > 0 and not _have_full))
+                        _mode = st.radio('安排方式', _modes, index=1 if _default_multi else 0, horizontal=True, key=_mode_key + ('_m' if _default_multi else '_s'))
+                        _multi = _mode == _modes[1] or _has_split
+                        _suggest = _team_plan if (_multi and _team_plan is not None) else None
+                        _main_default = (_suggest['main'] if _suggest and _suggest['main'] else (_order[0] if _order else ''))
+                        _main_options = [x for x in _order if x]
+                        _case_worker = st.selectbox('主責居服員（固定人選）', _main_options, index=_main_options.index(_main_default) if _main_default in _main_options else 0,
+                                                    format_func=_worker_label,
+                                                    key='pending_client_worker_' + str(_case) + ('_t' if _trial is not None else '_n') + ('_m' if _multi else '_s') + str(_main_default))
+                        _main_state = _state_of.get(_case_worker, '')
+                        if _main_state.startswith('⛔'):
+                            st.error(f"{caregiver_label(_case_worker)} 資格不符，排不進這個案家：{str(_status.loc[_status['居服員ID'] == _case_worker, '主要原因'].iloc[0])}"
+                                     "　（仍可按預覽看逐筆原因，但不會被排入。）")
+                        elif _main_state.startswith('❌'):
+                            st.warning(f"{caregiver_label(_case_worker)} 在目前班表上排不進任何一次；請改選其他人，或調整下表時段。")
+                        _patterns_base = edited_pattern_table(df_tasks, _case, _edits)
+                        _suggest_map = (_suggest or {}).get('pattern_workers', {})
+
+                        def _default_worker(pid):
+                            base = pid.split('#')[0]
+                            if '#' in pid:
+                                split = _edits['splits'].get(base, {})
+                                picked = split.get('second_worker') if pid.endswith('#2') else split.get('first_worker')
+                                if picked:
+                                    return picked
+                            return ((_edits.get('pattern_workers') or {}).get(pid)
+                                    or ((_suggest_map.get(pid) or _suggest_map.get(base)) if _multi else None) or _case_worker)
+                        _patterns_base['負責居服員'] = [_default_worker(str(t)) for t in _patterns_base['模式ID']]
+                        _editor_key = (f"pending_client_patterns_{_case}_{_mode_key}_{_case_worker}_{abs(hash(tuple(sorted(_suggest_map.items()))))}"
+                                       f"_{abs(hash(repr(_edits)))}")
+                        if _multi:
+                            st.caption('每一列是一個每週固定時段；在「負責居服員」欄指定誰來做（可全部同一人，也可分給不同人）。可修改開始／結束時間（維持服務分鐘）。')
+                        else:
+                            st.caption('所有星期與時段固定同一人；可修改下表起訖時間（維持服務分鐘）。')
+                        _case_patterns = st.data_editor(
+                            _patterns_base, hide_index=True, width='stretch', disabled=['模式ID', '來源列', '星期', '服務分鐘', '段'] + ([] if _multi else ['負責居服員']),
+                            column_config={'負責居服員': st.column_config.SelectboxColumn('負責居服員', options=_main_options, required=True,
+                                                                                      help='資格不符或排不進的人不會被排入，預覽會列出原因。')},
+                            key=_editor_key)
+                        _pattern_workers = ({str(r['模式ID']): str(r['負責居服員']) for _, r in _case_patterns.iterrows()}
+                                            if _multi else {})
+
+                        _task_workers = {**(dict((_suggest or {}).get('task_workers', {})) if _multi else {}), **(_edits.get('workers') or {})}
+                        if _task_workers:
+                            with st.expander(f'另有 {len(_task_workers)} 個個別日期由系統建議改派他人（固定時段內少數日期衝突）'):
+                                show_table(pd.DataFrame([{'任務ID': k, '改派給': v} for k, v in sorted(_task_workers.items())]).rename(columns={'改派給': '居服員'}),
+                                           hide_index=True, width='stretch')
+                        _team_set = sorted({_case_worker, *_pattern_workers.values(), *_task_workers.values()})
+                        _bad = [w for w in _team_set if _state_of.get(w, '').startswith('⛔')]
+                        if _bad:
+                            st.error('以下人選資格不符，不會被排入：' + '、'.join(caregiver_label(w) for w in _bad))
+                        _case_reason = reason_picker('pending_client_reason_' + str(_case), '整案安排原因（必選）')
+                        _case_preview_clicked = st.button('預覽整案排班', type='primary', key='pending_preview_btn')
+                        _case_signature = hashlib.sha256(repr((_case, _case_worker, _case_patterns.to_dict('records'), sorted(_task_workers.items()),
+                            _operational_assignments[['任務ID', '派單居服員']].to_dict('records'),
+                            df_tasks.to_dict('records'), res['df_cg'].to_dict('records'),
+                            config.client_primary_map, config.max_monthly_overtime_hours, config.buffer_mins, repr(_edits))).encode()).hexdigest()
+                        if _case_preview_clicked:
+                            try:
+                                with st.spinner('核對整案日期、時段、資格、交通與工時…'):
+                                    _preview = preview_client_assignment(df_tasks, _operational_assignments, res['df_cg'],
+                                        res['df_cl'], config, _case, _case_worker, _case_patterns, _pattern_workers, _task_workers,
+                                        splits=_edits.get('splits'), moves=_edits.get('moves'), unit_minutes=_unit_minutes)
+                                st.session_state['pending_client_preview'] = {'signature': _case_signature, 'result': _preview, 'reason': _case_reason or ''}
+                            except Exception as exc:
+                                st.session_state.pop('pending_client_preview', None)
+                                st.error('整案預覽失敗：' + str(exc))
+                        _stored = st.session_state.get('pending_client_preview')
+                        if _stored and _stored['signature'] == _case_signature:
+                            _preview = _stored['result']
+                            _p1, _p2, _p3 = st.columns(3)
+                            _p1.metric('整案服務次數', _preview['total'])
+                            _p2.metric('可安排', len(_preview['accepted']))
+                            _p3.metric('仍未派', len(_preview['failed']))
+                            _who = _preview['accepted']['派單居服員'].astype(str).value_counts()
+                            if len(_who):
+                                st.caption('各人承接：' + '；'.join(f'{caregiver_label(str(w))} {n} 次' for w, n in _who.items()))
+                            _months_now = sorted({str(d)[:7] for d in _client_tasks['日期']})
+                            for _member in sorted(set(_who.index)):
+                                st.caption(f'{caregiver_label(str(_member))} 月加班（接手前→後／上限）：' + month_overtime_summary(
+                                    _preview.get('ledger', {}), dict(config.work_day_minutes), str(_member), _months_now, config))
+                            if not _preview['failed'].empty:
+                                _grouped = _preview['failed'].assign(原因分類=_preview['failed']['原因'].map(lambda t: str(t).split('；')[0][:60]))
+                                st.error('以下服務仍排不進去（資格不符、時間衝突、休息或工時超標的人不會被硬排）：')
+                                show_table(_grouped.groupby('原因分類').agg(次數=('任務ID', 'size'), 例如日期=('日期', 'first')).reset_index().sort_values('次數', ascending=False),
+                                           hide_index=True, width='stretch')
+                                with st.expander('逐筆明細'):
+                                    show_table(_preview['failed'], hide_index=True, width='stretch')
+                                st.info('建議方案請看上方「② 系統建議」；這裡是進階手動模式：可改選其他主責、在上表改開始時間，或到「02 智慧排班作業」的人工調整，把衝突的既有班改給別人。')
+                            _apply_label = ('套用整案排班' if _preview['failed'].empty else
+                                            f"套用可排的 {len(_preview['accepted'])} 次（其餘 {len(_preview['failed'])} 次仍待處理）")
+                            if st.button(_apply_label, type='primary', key='apply_pending_client',
+                                         disabled=_preview['accepted'].empty):
+                                if not _case_reason:
+                                    st.warning(REASON_HINT)
+                                else:
+                                    try:
+                                        _commit_case(_case, _preview, _case_reason, _edits, main=_case_worker)
+                                    except Exception as exc:
+                                        st.error('整案套用失敗：' + str(exc))
+            _log_rows = res.get('whole_client_log') or []
+            if _log_rows:
+                with st.expander(f'本次整案調整紀錄 · {len(_log_rows)} 筆（可用來同步更新原始 Excel）'):
+                    _log_frame = pd.DataFrame(_log_rows)
+                    _log_frame.insert(0, '#', range(1, len(_log_frame) + 1))
+                    show_table(_log_frame, hide_index=True, width='stretch')
+                    download_button_quiet('下載整案調整紀錄 CSV', _log_frame.to_csv(index=False).encode('utf-8-sig'),
+                                          '整案調整紀錄.csv', 'text/csv', key='download_whole_client_log')
+                    st.caption('原始 Excel 不會被自動改寫；若這些調整要長期保留，請照這份紀錄修改 Excel 後重新匯入。')
 
         if _module == M_ISSUES and _issue_view == '未派案家與替代方案':
             if st.session_state.get('whole_client_notice'):
@@ -2541,7 +2606,7 @@ if "last_result" in st.session_state:
     # ---------- 04 排班結果與覆核：警示案件、已排與未排班次 ----------
     if _module == M_REVIEW:
         subhead('警示案件')
-        _issue_go_button('review_go_issues')      # 優先凸顯：直接前往未排案家處理
+        _issue_go_button('review_go_issues', primary=False)      # 優先凸顯：直接前往未排案家處理
         sa10_reminders = calculate_task_revenue_and_salary(_operational_tasks, config)
         sa10_reminders = sa10_reminders[sa10_reminders['SA10計費提醒'].ne('')]
 
@@ -2732,7 +2797,7 @@ if "last_result" in st.session_state:
                 show_table(daily_travel, hide_index=True, width='stretch')
                 show_table(df_route_result[['交通日期','派單居服員','任務ID','交通路段','預估車程(分)','路段緩衝(分)','含緩衝交通時間(分)','交通計算狀態']], hide_index=True, width='stretch')
                 download_button_quiet('下載逐段交通明細 CSV', export_frame(df_route_result).to_csv(index=False).encode('utf-8-sig'), '逐段交通明細.csv', 'text/csv')
-        module_nav_buttons(M_ANALYTICS)
+        step_action_bar(M_ANALYTICS, hint='主管報表只供檢視，不影響班表。')
 
     if _module != M_SCHEDULE:
         pass
@@ -2964,7 +3029,12 @@ if "last_result" in st.session_state:
 
 
     if _module == M_SCHEDULE:
-        module_nav_buttons(M_SCHEDULE)
+        if len(_pending_clients):
+            step_action_bar(M_SCHEDULE, f'下一步：處理 {len(_pending_clients)} 個未排案家 →', on_click=_go_pending, tone='warn',
+                            hint=f'已排 {assigned_count:,}／{total_tasks:,} 筆；還有 {len(_pending_clients)} 個案家未排完')
+        else:
+            step_action_bar(M_SCHEDULE, '下一步：確認班表 →', target=M_REVIEW,
+                            hint='全部服務都已排入，可直接確認班表' + (f'（{_review_needed} 筆已派需覆核）' if _review_needed else ''))
 
     # ==========================================
     # 區塊④：動態事件處理（03 衝突與異常處理 › 臨時異動）
@@ -4951,7 +5021,32 @@ if "last_result" in st.session_state:
         st.info('🧭 ' + SUBSTITUTE_RULE_TEXT)
         _changes_section()
     if _module == M_ISSUES:
-        module_nav_buttons(M_ISSUES)
+        _open_n = len(_pending_clients)
+
+        def _ask_leave_issues():
+            st.session_state['_confirm_leave_issues'] = True
+
+        def _dismiss_leave_issues():
+            st.session_state.pop('_confirm_leave_issues', None)
+
+        # 旗標保留到使用者做出選擇（或按 X 關閉）為止，對話框內的按鈕才收得到點擊。
+        @st.dialog('還有案家沒處理完', on_dismiss=_dismiss_leave_issues)
+        def _leave_issues_dialog(n):
+            st.write(f'目前仍有 **{n} 個案家**未排完。確定要先去確認班表嗎？之後可以從上方步驟列「③ 處理問題」回來繼續。')
+            _stay, _go_review = st.columns(2)
+            if _stay.button('繼續處理', key='leave_issues_stay', width='stretch'):
+                _dismiss_leave_issues()
+                st.rerun()
+            if _go_review.button('先去確認班表 →', key='leave_issues_go', type='primary', width='stretch'):
+                _dismiss_leave_issues()
+                st.session_state['cf_module'] = M_REVIEW
+                st.rerun()
+
+        step_action_bar(M_ISSUES, '下一步：確認班表 →', target=None if _open_n else M_REVIEW,
+                        on_click=_ask_leave_issues if _open_n else None, tone='warn' if _open_n else 'info',
+                        hint=(f'還有 {_open_n} 個案家未排完' if _open_n else '未派案家已全部處理完成'))
+        if st.session_state.get('_confirm_leave_issues'):
+            _leave_issues_dialog(_open_n)
 
 
     # 班表整表（含交通、薪資欄位）只在指派／任務／交通／人工調整／工作流程狀態改變時才重建；
@@ -5100,8 +5195,12 @@ if "last_result" in st.session_state:
         # 最終有效班表（含居督覆寫與臨時插單）重建完成即寫回持久帳本，確保跨月回溯「連續上班天數」
         # 用的是當下真正生效的指派，不是尚未套用覆寫前的 AI 原始建議。
         if '日期' in df_final.columns and '最終派單居服員' in df_final.columns:
-            _final_assigned = df_final[df_final['最終派單居服員'].astype(str) != '未指派']
-            _workflow_store.record_workdays(zip(_final_assigned['最終派單居服員'], _final_assigned['日期']))
+            _final_assigned = df_final[~df_final['最終派單居服員'].astype(str).isin(['未指派', '', 'nan', 'None'])]
+            _ledger_dates = pd.to_datetime(df_final['日期'], errors='coerce').dropna()
+            if not _ledger_dates.empty:
+                # 覆寫本期間（班表涵蓋的日期範圍），撤銷／改派後不在班上的日子會被移除。
+                _workflow_store.replace_workdays(zip(_final_assigned['最終派單居服員'], _final_assigned['日期']),
+                                                 res.get('range_start') or _ledger_dates.min(), res.get('range_end') or _ledger_dates.max())
     if _module == M_REVIEW:
         subhead('最終班表（目前有效派單）')
         st.caption('沿用週服務計畫欄位，加入派單居服員與逐段交通。交通時間為估計分鐘，原檔的0不當成實測；空白表示尚未計算。姓名依側邊欄「個資顯示設定」呈現。')
@@ -5284,7 +5383,8 @@ if "last_result" in st.session_state:
                 st.caption('補訓期限到期前請確認原居服員已完成訓練並更新員工資料「取得資格」；取得資格後才可改回主責，未完成者維持由有訓練的居服員服務。')
             else:
                 st.info('目前沒有資格追蹤項目（案家新增失智、足部照護等資格重新檢核會記在這裡）。')
-        module_nav_buttons(M_REVIEW)
+        step_action_bar(M_REVIEW, '看成效：主管報表 →', target=M_ANALYTICS,
+                        hint='確認無誤後，可在上方下載最終班表')
 
     # 自動存檔：作業內容有變動（排班、改派、插單、整案調整、改期…）就寫入本機資料庫。
     try:
@@ -5322,8 +5422,8 @@ if "last_result" in st.session_state:
 else:
 
     if _module == M_SCHEDULE:
-        st.info("確認資料後，按上方「開始排班 · 全期間」產生班表。")
-        module_nav_buttons(M_SCHEDULE)
+        step_action_bar(M_SCHEDULE, '下一步：處理問題 →', disabled=True, help='先按上方「啟動 AI 全域最佳化排班」',
+                        hint='按上方「✨ 啟動 AI 全域最佳化排班」，排完即可繼續')
     elif _module in (M_ISSUES, M_REVIEW, M_ANALYTICS):
         module_header(_module)
         empty_module(_module, '尚未產生班表。請先到「02 智慧排班作業」按「開始排班」，完成後這裡會顯示結果。')

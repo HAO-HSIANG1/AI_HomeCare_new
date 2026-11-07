@@ -476,8 +476,9 @@ def _pick_tab(key, value):
     st.session_state[key] = value
 
 
-def big_tabs(options, key, icons=None, size='large'):
-    """大型分頁按鈕：比 segmented control 明顯，選中的一顆為深綠底白字。回傳目前選項。"""
+def big_tabs(options, key, icons=None, size='large', suffixes=None):
+    """大型分頁按鈕：比 segmented control 明顯，選中的一顆為深綠底白字。回傳目前選項。
+    suffixes：每顆按鈕標籤後面的小計（例如「6 案」），只影響顯示，不影響回傳的選項值。"""
     options = list(options)
     if st.session_state.get(key) not in options:
         st.session_state[key] = options[0]
@@ -486,6 +487,8 @@ def big_tabs(options, key, icons=None, size='large'):
         cols = st.columns(len(options))
         for i, (col, option) in enumerate(zip(cols, options)):
             label = (f'{icons[i]}  ' if icons and i < len(icons) else '') + option
+            if suffixes and i < len(suffixes) and suffixes[i]:
+                label += f'　· {suffixes[i]}'
             col.button(label, key=f'{key}__tab{i}', type='primary' if option == current else 'secondary',
                        on_click=_pick_tab, args=(key, option), width='stretch')
     return current
@@ -786,6 +789,7 @@ _REASON_BADGES = [
     (('趕到', '轉場', '交通', '空檔'), '🔴 交通轉場不足', 'red'),
     (('重疊',), '🔴 時段重疊', 'red'),
     (('資格', '證照', '訓練', '限女', '限男', '失智'), '🟡 證照資格不符', 'amber'),
+    (('連續上班', '連續工作天數'), '🟠 連續上班天數', 'amber'),
     (('連續工作', '休息'), '🟠 連續工作超限', 'amber'),
     (('月加班', '加班', '工時'), '🟠 工時超限', 'amber'),
     (('請假',), '🟡 居服員請假', 'amber'),
@@ -941,6 +945,23 @@ h1,h2,h3,h4,h5{ color:var(--cf-ink) !important; }
 [class*="st-key-cfstep_now"] button{ background:var(--cf-primary) !important; border-color:var(--cf-primary) !important; box-shadow:0 0 0 6px #D6E6EE !important; }
 [class*="st-key-cfstep_now"] button p{ color:#FFFFFF !important; font-weight:900 !important; }
 [class*="st-key-cfstep_"] button:hover{ border-color:var(--cf-primary) !important; }
+[class*="st-key-cfstep_warn"] button, [class*="st-key-cfstep_warn"] .stButton button{ background:var(--cf-amber-soft) !important; border-color:var(--cf-amber-line) !important; }
+[class*="st-key-cfstep_warn"] button p{ color:var(--cf-amber-ink) !important; font-weight:800 !important; }
+[class*="st-key-cfstep_lock"] button, [class*="st-key-cfstep_lock"] .stButton button,
+[class*="st-key-cfstep_lock"] button:hover, [class*="st-key-cfstep_lock"] button:disabled{ background:#F4F1EC !important; border:2px dashed var(--cf-line-2) !important; opacity:1 !important; cursor:not-allowed; }
+[class*="st-key-cfstep_lock"] button p{ color:#A39686 !important; }
+[class*="st-key-cfstep_"][class*="_mgr_"] button{ border-radius:999px !important; }
+[class*="st-key-cfstep_todo_mgr_"] button, [class*="st-key-cfstep_todo_mgr_"] .stButton button{ background:#FBF7F0 !important; }
+/* 底部固定操作列 */
+[class*="st-key-cfactionbar_"]{ position:sticky; bottom:0; z-index:60; margin-top:28px; padding:14px 16px;
+  background:#FFFFFFF2; border:1px solid var(--cf-line); border-radius:20px; box-shadow:0 -6px 20px #2B21170F; backdrop-filter:blur(4px); }
+[class*="st-key-cfactionbar_warn"]{ border-color:var(--cf-amber-line); background:#FFF9F0F2; }
+.cf-bar-hint{ font-size:calc(17px * var(--cf-s)); color:var(--cf-text); text-align:center; line-height:1.5; }
+[class*="st-key-cfactionbar_warn"] .cf-bar-hint{ color:var(--cf-amber-ink); font-weight:700; }
+[class*="st-key-cfactionbar_"] button[kind="primary"]{ min-height:calc(58px * var(--cf-s)) !important; }
+[class*="st-key-cfactionbar_"] button[kind="primary"] p{ font-size:calc(19px * var(--cf-s)) !important; font-weight:800 !important; }
+[class*="st-key-cfactionbar_"] button[kind="primary"]:disabled{ background:#E9E3DA !important; border-color:#E9E3DA !important; }
+[class*="st-key-cfactionbar_"] button[kind="primary"]:disabled p{ color:#8A7C6F !important; }
 
 /* 側邊欄：收合時保留設定 */
 [data-testid="stSidebar"]{ background:#FFFDF9 !important; border-right:1px solid var(--cf-line); }
@@ -1026,6 +1047,22 @@ h1,h2,h3,h4,h5{ color:var(--cf-ink) !important; }
 .cf-family em{ font-style:normal; color:var(--cf-amber); }
 
 /* 03 案家卡片 */
+/* 03 收件匣 */
+.cf-inbox-progress{ font-size:calc(18px * var(--cf-s)); color:var(--cf-text); margin:6px 0 2px; }
+.cf-inbox-progress b{ font-size:calc(24px * var(--cf-s)); color:var(--cf-primary-ink); }
+[class*="st-key-cfinbox_"]{ background:#FFFFFF; border:1px solid var(--cf-line); border-left:5px solid var(--cf-amber-line);
+  border-radius:16px; padding:12px 14px 10px; gap:6px !important; }
+[class*="st-key-cfinbox_sel"]{ background:var(--cf-primary-soft); border-color:var(--cf-primary); border-left-color:var(--cf-primary);
+  box-shadow:0 0 0 3px #D6E6EE; }
+.cf-inbox-name{ font-size:calc(20px * var(--cf-s)); font-weight:800; color:var(--cf-ink); line-height:1.3; }
+.cf-inbox-meta{ font-size:calc(15px * var(--cf-s)); color:var(--cf-muted); margin-top:2px; }
+.cf-inbox-meta .cf-badge{ font-size:calc(13.5px * var(--cf-s)); padding:1px 8px; }
+.cf-inbox-why{ font-size:calc(16px * var(--cf-s)); color:var(--cf-text); line-height:1.5; margin-top:4px; }
+[class*="st-key-cfinbox_"] button{ min-height:0 !important; padding:4px 10px !important; }
+[class*="st-key-cfinbox_sel"] button:disabled{ background:transparent !important; border:0 !important; opacity:1 !important; }
+[class*="st-key-cfinbox_sel"] button:disabled p{ color:var(--cf-primary-ink) !important; font-weight:800 !important; }
+.cf-inbox-done{ font-size:calc(16px * var(--cf-s)); color:#8A9A90; padding:8px 14px; border-radius:12px; background:#F3F7F4; margin:6px 0;
+  text-decoration:line-through; text-decoration-color:#B9C8BE; }
 [class*="st-key-cfcase_"]{ background:#FFFFFF; border:2px solid var(--cf-amber-line) !important; border-radius:22px !important; }
 .cf-case-name{ font-size:calc(26px * var(--cf-s)); font-weight:800; color:var(--cf-ink); line-height:1.3; }
 .cf-case-meta{ font-size:calc(17px * var(--cf-s)); color:var(--cf-muted); }
@@ -1105,15 +1142,61 @@ STEP_LABELS = {'import': '匯入資料', 'schedule': '開始排班', 'issues': '
 _CIRCLED = '①②③④⑤'
 
 
-def render_stepper(current, done=()):
-    """方案 C 的 1→5 步驟導引（取代側邊欄成為主要導覽）。done：已完成的模組代碼。"""
+FLOW_KEYS = ['import', 'schedule', 'issues', 'review']   # 排班作業 1→4；analytics 為主管報表，獨立放右側
+
+
+def render_stepper(current, done=(), locked=None, warn=None):
+    """方案 A：頂部步驟列是唯一的換頁方式。
+
+    done：已完成的模組；locked：{模組: 尚未解鎖原因}；warn：{模組: 提醒文字}（例如資料已變更需重新排班）。
+    每顆按鈕 key 固定為 cfnav_<模組>；外層容器 key 帶狀態（cfstep_now／done／todo／lock／warn）供 CSS 上色。
+    """
+    locked, warn = dict(locked or {}), dict(warn or {})
     with st.container(key='cfsteps'):
-        cols = st.columns(len(MODULE_KEYS), gap='small')
-        for i, (col, key) in enumerate(zip(cols, MODULE_KEYS)):
-            state = 'now' if key == current else ('done' if key in done else 'todo')
-            mark = '✓' if state == 'done' else _CIRCLED[i]
-            col.button(f'{mark}  {STEP_LABELS[key]}', key=f'cfstep_{state}_{key}', on_click=go_to_module, args=(key,),
-                       width='stretch', help=module_label(key))
+        cols = st.columns([1, 1, 1, 1, 0.08, 0.9], gap='small')
+        for i, key in enumerate(FLOW_KEYS + ['analytics']):
+            col = cols[i] if i < 4 else cols[5]
+            if key in locked:
+                state, mark = 'lock', '🔒'
+            elif key == current:
+                state, mark = 'now', ('⚠' if key in warn else _CIRCLED[i] if i < 4 else '📊')
+            elif key in warn:
+                state, mark = 'warn', '⚠'
+            elif key in done:
+                state, mark = 'done', '✓'
+            else:
+                state, mark = 'todo', (_CIRCLED[i] if i < 4 else '📊')
+            label = STEP_LABELS[key] if i < 4 else '主管報表'
+            tip = locked.get(key) or warn.get(key) or module_label(key)
+            with col.container(key=f'cfstep_{state}_{"mgr_" if i == 4 else ""}{key}'):
+                st.button(f'{mark}  {label}', key=f'cfnav_{key}', on_click=go_to_module, args=(key,),
+                          disabled=key in locked, width='stretch', help=tip)
+
+
+def _action_click(target, callback):
+    if callback:
+        callback()
+    if target:
+        st.session_state['cf_module'] = target
+
+
+def step_action_bar(current, label=None, target=None, hint='', disabled=False, help=None, on_click=None, tone='info'):
+    """每頁底部固定的操作列：左＝上一步、中＝這一頁還差什麼、右＝唯一的主按鈕。
+
+    target：主按鈕要前往的模組；on_click：額外的回呼（先於換頁執行）。label 為 None 時不顯示主按鈕。
+    """
+    index = FLOW_KEYS.index(current) if current in FLOW_KEYS else None
+    prev = FLOW_KEYS[index - 1] if index else ('review' if current == 'analytics' else None)
+    with st.container(key=f'cfactionbar_{tone}'):
+        left, middle, right = st.columns([1, 2.1, 1.5], vertical_alignment='center')
+        if prev:
+            left.button(f'← 上一步：{STEP_LABELS[prev]}', key=f'cfbar_prev_{current}', on_click=go_to_module,
+                        args=(prev,), width='stretch')
+        if hint:
+            middle.markdown(f'<div class="cf-bar-hint">{_e(hint)}</div>', unsafe_allow_html=True)
+        if label:
+            right.button(label, key=f'cfbar_next_{current}', type='primary', disabled=disabled, help=help,
+                         on_click=_action_click, args=(target, on_click), width='stretch')
 
 
 def result_hero(title, total, assigned, rate, families_left=0, avg_travel=None):

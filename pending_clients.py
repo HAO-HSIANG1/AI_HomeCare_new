@@ -4,7 +4,7 @@ from dataclasses import replace
 import hashlib
 from datetime import datetime
 import pandas as pd
-from agency_rules import clean, leave_overlap
+from agency_rules import clean, leave_overlap, consecutive_run_before
 from recurring_schedule import visit_pattern
 
 
@@ -258,8 +258,10 @@ def edited_pattern_table(tasks, client, edits=None):
 
 
 def preview_client_assignment(tasks, assignments, caregivers, clients, config, client, worker, patterns=None, pattern_workers=None, task_workers=None,
-                              splits=None, moves=None, unit_minutes=None):
+                              splits=None, moves=None, unit_minutes=None, enforce_consecutive_days=True):
     """Check every date atomically; caller decides whether to apply the preview.
+
+    enforce_consecutive_days：與 AI 主排班相同，把「不得連續上班逾上限天數」當硬性條件（預設開啟）。
 
     The selected worker becomes the client owner across all weekdays. Only
     overlapping actual leave permits retaining/selecting a qualified backup.
@@ -344,6 +346,34 @@ def preview_client_assignment(tasks, assignments, caregivers, clients, config, c
         'days':{id(f):{'frame':f,'ids':set(f['任務ID']),'lookup':f.set_index('任務ID').to_dict('index')} for f in days.values()}}
     prepared = set()
     accepted,failed,leaves = [],[],[]
+    # 連續上班天數：與 AI 主排班同一條硬性規則（不得連續上班逾 max_consecutive_work_days 天）。
+    # 以前整案試算沒有檢查這條，AI 因「連續工作天數」擋下的案家，在這裡會被誤判為「可排進」。
+    # 已上班日 = 跨月種子（config.worker_workday_seed）＋其他案家目前的有效派單＋本次預覽已接受的服務。
+    _limit_days = int(getattr(config,'max_consecutive_work_days',6))
+    _task_dates = dict(zip(proposed['任務ID'].astype(str),proposed['日期'].astype(str)))
+    workdays = {str(k):{str(d)[:10] for d in v} for k,v in (getattr(config,'worker_workday_seed',None) or {}).items()}
+    for _tid,_who in zip(remaining.get('任務ID',[]),remaining.get('派單居服員',[])):
+        _day = _task_dates.get(str(_tid))
+        if _day:
+            workdays.setdefault(str(clean(_who)),set()).add(_day[:10])
+    def streak_error(candidate,date):
+        """排入 date 後，candidate 的連續上班天數（往前＋往後一起算）超過上限時回傳說明；當天本來就有上班則不影響。"""
+        if not enforce_consecutive_days:
+            return None
+        days_on = workdays.get(str(candidate),set())
+        date = str(date)[:10]
+        if date in days_on:
+            return None
+        before = consecutive_run_before(days_on,date)
+        after,cursor = 0,pd.Timestamp(date)+pd.Timedelta(days=1)
+        while cursor.strftime('%Y-%m-%d') in days_on:
+            after += 1
+            cursor += pd.Timedelta(days=1)
+        run = before+after+1
+        if run <= _limit_days:
+            return None
+        return (f'{candidate} 若 {date} 再排班，將連續上班 {run} 天，超過上限 {_limit_days} 天'
+                f'（不得連續上班逾 {_limit_days} 天）')
     def prepare(candidate,date):
         key = candidate,date[:7]
         if key not in prepared:
@@ -353,11 +383,17 @@ def preview_client_assignment(tasks, assignments, caregivers, clients, config, c
             prepared.add(key)
     def evaluate(task,candidate):
         prepare(candidate,task['日期'])
-        return engine._evaluate_reassignment(task['任務ID'],candidate,days[task['日期']],
-                                            assigned[task['日期']],caregivers,trial)
+        checked = engine._evaluate_reassignment(task['任務ID'],candidate,days[task['日期']],
+                                               assigned[task['日期']],caregivers,trial)
+        if checked.get('available'):
+            streak = streak_error(candidate,task['日期'])
+            if streak:
+                return {**checked,'available':False,'detail':streak,'reason':'consecutive_days'}
+        return checked
     def add(task,candidate,checked):
         row={'任務ID':task['任務ID'],'派單居服員':candidate}
         accepted.append(row)
+        workdays.setdefault(str(candidate),set()).add(str(task['日期'])[:10])
         assigned[task['日期']] = pd.concat([assigned[task['日期']],pd.DataFrame([row])],ignore_index=True)
         trial.work_day_minutes[(candidate,task['日期'])]=checked['working_minutes']
     for _,task in selected.iterrows():
@@ -416,7 +452,12 @@ def preview_client_assignment(tasks, assignments, caregivers, clients, config, c
             registered = id(frame)
             trial.dispatch_cache['days'][registered] = {'frame': frame, 'ids': set(frame['任務ID']), 'lookup': lookup}
         try:
-            return engine._evaluate_reassignment(row['任務ID'],candidate,frame,day_assigned,caregivers,trial)
+            checked = engine._evaluate_reassignment(row['任務ID'],candidate,frame,day_assigned,caregivers,trial)
+            if checked.get('available'):
+                streak = streak_error(candidate,date)
+                if streak:
+                    return {**checked,'available':False,'detail':streak,'reason':'consecutive_days'}
+            return checked
         finally:
             trial.client_backup_map = saved
             if registered is not None:
