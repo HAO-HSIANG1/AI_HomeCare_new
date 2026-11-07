@@ -962,6 +962,27 @@ h1,h2,h3,h4,h5{ color:var(--cf-ink) !important; }
 [class*="st-key-cfactionbar_"] button[kind="primary"] p{ font-size:calc(19px * var(--cf-s)) !important; font-weight:800 !important; }
 [class*="st-key-cfactionbar_"] button[kind="primary"]:disabled{ background:#E9E3DA !important; border-color:#E9E3DA !important; }
 [class*="st-key-cfactionbar_"] button[kind="primary"]:disabled p{ color:#8A7C6F !important; }
+/* ② 開始排班：排班前大卡 */
+[class*="st-key-cfrun_card"]{ border-radius:24px !important; background:var(--cf-card); padding:8px 6px; }
+.cf-runcard b{ display:block; font-size:calc(32px * var(--cf-s)); color:var(--cf-ink); font-weight:900; line-height:1.3; }
+.cf-runcard span{ display:block; margin-top:4px; font-size:calc(18px * var(--cf-s)); color:var(--cf-muted); }
+/* ④ 確認班表：定稿狀態列 */
+.cf-final{ padding:12px 18px; border-radius:16px; border:1px solid var(--cf-line); background:#FBF7F0; font-size:calc(18px * var(--cf-s)); color:var(--cf-text); margin:4px 0 10px; }
+.cf-final.ok{ background:var(--cf-ok-soft); border-color:var(--cf-ok-line); color:#1D5C3C; font-weight:800; }
+.cf-final.warn{ background:var(--cf-amber-soft); border-color:var(--cf-amber-line); color:var(--cf-amber-ink); font-weight:800; }
+/* ① 匯入資料：三張打勾卡片 */
+[class*="st-key-cfimport_card_"]{ border-radius:22px !important; background:var(--cf-card); margin-bottom:12px; }
+.cf-icard{ display:flex; gap:16px; align-items:center; padding:2px 0 4px; }
+.cf-icard-mark{ flex:none; width:calc(46px * var(--cf-s)); height:calc(46px * var(--cf-s)); border-radius:50%; display:flex; align-items:center; justify-content:center;
+  font-size:calc(22px * var(--cf-s)); font-weight:900; background:var(--cf-primary); color:#FFFFFF; box-shadow:0 0 0 5px #D6E6EE; }
+.cf-icard b{ display:block; font-size:calc(22px * var(--cf-s)); color:var(--cf-ink); }
+.cf-icard span:not(.cf-icard-mark){ display:block; font-size:calc(17px * var(--cf-s)); color:var(--cf-muted); line-height:1.5; }
+.cf-icard.done .cf-icard-mark{ background:var(--cf-ok); box-shadow:0 0 0 5px #2F855A26; }
+.cf-icard.done span:not(.cf-icard-mark){ color:#1D5C3C; font-weight:700; }
+.cf-icard.warn .cf-icard-mark{ background:var(--cf-amber); box-shadow:0 0 0 5px var(--cf-amber-soft); }
+.cf-icard.warn span:not(.cf-icard-mark){ color:var(--cf-amber-ink); font-weight:700; }
+.cf-icard.lock .cf-icard-mark{ background:#F4F1EC; color:#A39686; box-shadow:none; border:2px dashed var(--cf-line-2); }
+.cf-icard.lock b, .cf-icard.lock span:not(.cf-icard-mark){ color:#A39686 !important; }
 
 /* 側邊欄：收合時保留設定 */
 [data-testid="stSidebar"]{ background:#FFFDF9 !important; border-right:1px solid var(--cf-line); }
@@ -1197,6 +1218,69 @@ def step_action_bar(current, label=None, target=None, hint='', disabled=False, h
         if label:
             right.button(label, key=f'cfbar_next_{current}', type='primary', disabled=disabled, help=help,
                          on_click=_action_click, args=(target, on_click), width='stretch')
+
+
+_CARD_MARK = {'done': '✓', 'warn': '!', 'lock': '🔒'}
+
+
+def import_card(number, title):
+    """① 匯入資料的打勾卡片。回傳 (容器, set_head)；set_head(state, summary) 可在資料讀完後再更新標題列。
+
+    state：done（✓ 已完成）／now（進行中）／warn（需要處理）／lock（要先完成前一張）。
+    """
+    box = st.container(key=f'cfimport_card_{number}', border=True)
+    head = box.empty()
+
+    def set_head(state, summary=''):
+        mark = _CARD_MARK.get(state, _CIRCLED[number - 1])
+        head.markdown(f'<div class="cf-icard {state}"><span class="cf-icard-mark">{_e(mark)}</span>'
+                      f'<div><b>{_e(title)}</b><span>{_e(summary)}</span></div></div>', unsafe_allow_html=True)
+
+    set_head('now')
+    return box, set_head
+
+
+# ② 開始排班：執行過程的五個步驟（st.status 內逐步打勾）
+RUN_STEPS = ['讀取資料', '查詢交通時間', '篩選資格', '最佳化求解', '完成']
+
+
+def run_stage_of(text):
+    """把排班引擎的進度文字對應到 RUN_STEPS 的位置（只會往前，由呼叫端取最大值）。"""
+    text = str(text or '')
+    if '全期間排班完成' in text:
+        return 4
+    if any(word in text for word in ('配對', '請假代班', '轉場最佳化', '最終交通')):
+        return 3
+    if any(word in text for word in ('首選', '核對')):
+        return 2
+    return 1
+
+
+def run_steps_markdown(stage, detail=''):
+    """步驟清單：已完成 ✅、進行中 ⏳（附目前細節）、尚未開始 ○。"""
+    lines = []
+    for i, name in enumerate(RUN_STEPS):
+        if i < stage or stage == len(RUN_STEPS) - 1:
+            lines.append(f'✅ {name}')
+        elif i == stage:
+            lines.append(f'⏳ **{name}**' + (f'　·　{detail}' if detail else ''))
+        else:
+            lines.append(f'○ {name}')
+    return '  \n'.join(lines)
+
+
+def run_card_html(title, sub):
+    """② 排班前的大卡標題。"""
+    return f'<div class="cf-runcard"><b>{_e(title)}</b><span>{_e(sub)}</span></div>'
+
+
+def signoff_head_html(finalized_at=None, stale=False):
+    """④ 簽核清單上方的定稿狀態列。"""
+    if finalized_at and not stale:
+        return f'<div class="cf-final ok">✅ 已定稿　·　{_e(finalized_at)}　·　可在下方「匯出」下載班表；班表仍可修改，修改後需重新定稿。</div>'
+    if finalized_at and stale:
+        return f'<div class="cf-final warn">⚠ {_e(finalized_at)} 定稿後班表又有修改，請重新勾選並定稿。</div>'
+    return '<div class="cf-final">尚未定稿：逐項確認後，按下方「✅ 定稿並匯出班表」。</div>'
 
 
 def result_hero(title, total, assigned, rate, families_left=0, avg_travel=None):

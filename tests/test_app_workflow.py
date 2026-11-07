@@ -45,7 +45,7 @@ def test_full_month_save_and_next_month_reuse(tmp_path, monkeypatch):
     app_path=Path(engine.__file__).with_name('app.py')
     app=AppTest.from_file(str(app_path),default_timeout=60).run()
     assert not app.exception
-    app.date_input(key='agency_range_start').set_value(date(2026,11,1)).run()
+    app.date_input(key='cf_period_range').set_value((date(2026,11,1),date(2026,11,30))).run()
     read_count=len(source_reads)
     app.button(key='cfnav_schedule').click().run()   # 開始排班在「02 智慧排班作業」
     assert not app.exception
@@ -83,7 +83,7 @@ def test_full_month_save_and_next_month_reuse(tmp_path, monkeypatch):
     assert backup['任務ID'] in set(effective['任務ID'])
     assert store.primary_map()=={'C':'A'}
     app.button(key='cfnav_import').click().run()     # 排班期間在「01 資料匯入與排班設定」
-    app.date_input(key='agency_range_start').set_value(date(2026,12,1)).run()
+    app.date_input(key='cf_period_range').set_value((date(2026,12,1),date(2026,12,31))).run()
     app.button(key='cfnav_schedule').click().run()
     assert app.session_state['agency_range_start']==date(2026,12,1)   # 換頁後期間仍保留
     app.button(key='run_full_period').click().run()
@@ -93,9 +93,12 @@ def test_full_month_save_and_next_month_reuse(tmp_path, monkeypatch):
     assert result['client_primary_map']=={'C':'A'}
     assert result['phase2']['df_result']['派單居服員'].eq('A').all()
     app.button(key='cfnav_import').click().run()
-    app.selectbox(key='agency_period').select('一年').run()
+    assert app.session_state['agency_range_end']==date(2026,12,31)
+    app.date_input(key='cf_period_range').set_value((date(2026,12,1),date(2027,12,31))).run()   # 超過 366 天：不套用
     assert not app.exception
-    assert app.date_input(key='agency_range_end').value==date(2027,11,30)
+    assert app.session_state['agency_range_end']==date(2026,12,31) and app.error
+    app.button(key='cf_period_m0').click().run()     # 快選「本月」：整月
+    assert app.session_state['agency_period']=='一個月' and app.session_state['agency_range_start'].day==1
 
 
 def test_pending_clients_bulk_apply_resolves_all_weeks(tmp_path, monkeypatch):
@@ -120,7 +123,7 @@ def test_pending_clients_bulk_apply_resolves_all_weeks(tmp_path, monkeypatch):
         for name,frame in [('員工資料',employees),('個案資料',clients),('週服務計畫',weekly),('Service_code',master)]:
             frame.to_excel(writer,sheet_name=name,index=False)
     app=AppTest.from_file(str(Path(engine.__file__).with_name('app.py')),default_timeout=60).run()
-    app.date_input(key='agency_range_start').set_value(date(2026,11,1)).run()
+    app.date_input(key='cf_period_range').set_value((date(2026,11,1),date(2026,11,30))).run()
     app.button(key='cfnav_schedule').click().run()
     app.button(key='run_full_period').click().run()
     assert not app.exception,[e.message for e in app.exception]
