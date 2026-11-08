@@ -1,7 +1,7 @@
 # CareFlow GUI 改版：現況與待辦
 
 最後更新：2026-11-07
-分支：`develop`（第 1、2 步已 commit；第 3、4 步還沒 commit）
+分支：`develop`（第 1～4 步已 commit；第 5 步還沒 commit）
 
 ---
 
@@ -21,7 +21,7 @@
 | ② 開始排班 | 單一主畫面＋看得到執行過程 | ✅ 完成 |
 | ③ 處理問題 | 收件匣（左邊清單、右邊詳情） | ✅ 完成 |
 | ④ 確認班表 | 簽核清單＋標示「已定稿」 | ✅ 完成 |
-| 主管報表 | 一頁式報告 | ⏳ 待做（第 5 步） |
+| 主管報表 | 一頁式報告 | ✅ 完成 |
 
 **使用者已決定：**
 - ④ 的「定稿」**只標示「已定稿」**，不鎖住班表。
@@ -118,16 +118,20 @@
   - 定稿狀態沒有放進自動存檔，重新整理還原後要重新簽核。
 - 測試：隔離資料夾 AppTest 跑過：大卡顯示 → 排班（步驟秒數有記錄）→ 大卡消失、重新排班收進展開區 → ④ 三項勾選後才能定稿 → 定稿後多次重跑仍有效 → 換頁回來勾選保留 → 重新排班後定稿清除。基準 5 檔仍是 39 failed，失敗的都是原本就有的。
 
----
-
-## ⏳ 待做
-
 ### 第 5 步：主管報表改成一頁式報告
-- 頂部三個大數字：省下的排班工時、交通時間減少的百分比、完成率。
-- 中段：需求熱圖、人力負荷分布。
-- 下段：AI 增聘和調派建議。
-- 「效益估算依據」收進「⚙️ 調整假設」。
-- 提供下載報告（PDF 或 PNG）。
+- `manager_report.py`（新檔，純函式，不呼叫 Streamlit）：
+  - `headline_cards()`：三大數字——省下的排班工時（人工時間 − AI 時間）、交通時間減少（假設比例，附「每月省 N 小時」）、服務完成率（實際已派 ÷ 全部）。
+  - `heat_view()`：報表與圖檔共用的熱圖；有可上班人數時用吃緊度，否則用需求量。
+  - `load_distribution()`／`load_summary()`：每位居服員總工時，依加班狀態（正常／接近上限／超過上限）分欄。
+  - `staffing_advice()`：缺工時段增聘／備援建議＋超時居服員調派建議（改派給日均工時最低的人）＋未派筆數提醒。
+  - `build_report_figure()`＋`figure_bytes()`：A4 直式一頁報告，PNG／PDF。用 matplotlib 物件導向 API（不經 pyplot），字型設定包在存檔那一刻（`_rc()`），PDF 內嵌字型。
+- `app.py` 主管報表頁由上而下：三張大數字卡（`impact_cards(cols=3)`）→「⚙️ 調整假設」展開區 → 需求熱圖（保留切換模式）→ 人力負荷分布（堆疊長條，依狀態上色）→ AI 增聘和調派建議 → 下載 PDF／PNG → 附錄分頁（營運效益、排班儀錶板、工時與薪資、轉場明細）。
+  - 下載用 `download_button` 的 callable（點了才產生，不拖慢頁面）；居服員名稱遵守「匯出顯示姓名」個資設定。
+  - 附錄裡原本的展開區改成分頁內直接顯示（分頁內不能再放展開區的問題一併避開）。
+- `dashboard_view.py`：`_render_demand_heat` 改名為公開的 `render_demand_heat(D, advice=True)`；`render_dashboard` 新增 `show_heat`、`title` 參數，附錄裡不重複畫熱圖。
+- `careflow_ui.impact_cards` 新增 `cols` 參數（`.cf-impact.three`），`after` 空白時只顯示 `before`。
+- 測試：新增 `tests/test_manager_report.py`（4 個，通過；含隔離資料夾 AppTest 開啟主管報表頁）。基準 5 檔仍是 39 failed / 17 passed。
+- 還沒在瀏覽器看過：三欄大數字在窄螢幕的折行、長條圖人數很多時的 X 軸標籤。
 
 ---
 
@@ -162,13 +166,13 @@
 
 ## 已修改但還沒 commit 的檔案
 
-第 1、2 步已在 commit 526a409。第 3、4 步的改動：
+第 1～4 步已在 commit f5f27e5。第 5 步的改動：
 
 ```
 M app.py
 M careflow_ui.py
-M tests/test_app_workflow.py
-?? import_health.py
-?? tests/test_import_health.py
-?? UI_改版進度.md
+M dashboard_view.py
+M UI_改版進度.md
+?? manager_report.py
+?? tests/test_manager_report.py
 ```

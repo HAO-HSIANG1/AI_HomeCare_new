@@ -713,6 +713,8 @@ h1,h2,h3,h4{ color:var(--cf-ink); }
 
 /* ---------- 05 排班效益 ---------- */
 .cf-impact{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin:8px 0 18px; }
+.cf-impact.three{ grid-template-columns:repeat(3,minmax(0,1fr)); }
+.cf-impact.three .n{ font-size:46px; }
 .cf-impact > div{ position:relative; background:var(--cf-card); border:1px solid var(--cf-line); border-radius:18px; padding:22px 24px; box-shadow:var(--cf-shadow); overflow:hidden; }
 .cf-impact > div:before{ content:""; position:absolute; inset:0 0 auto 0; height:6px; background:linear-gradient(90deg,var(--cf-primary),var(--cf-primary-2)); }
 .cf-impact > div.ai:before{ background:linear-gradient(90deg,var(--cf-ai-1),var(--cf-ai-2)); }
@@ -732,7 +734,7 @@ h1,h2,h3,h4{ color:var(--cf-ink); }
 .cf-advice b{ display:block; font-size:18px; color:var(--cf-ink); margin:6px 0 4px; }
 .cf-advice span{ display:block; font-size:15.5px; color:var(--cf-text); line-height:1.6; }
 
-@media (max-width:900px){ .cf-ready, .cf-impact{ grid-template-columns:1fr; } .cf-header{ padding:10px 14px; } .cf-brand b{ font-size:19px; } .cf-impact .n{ font-size:44px; } }
+@media (max-width:900px){ .cf-ready, .cf-impact, .cf-impact.three{ grid-template-columns:1fr; } .cf-header{ padding:10px 14px; } .cf-brand b{ font-size:19px; } .cf-impact .n{ font-size:44px; } }
 </style>
 """
 
@@ -868,14 +870,15 @@ def line_preview_empty():
                 unsafe_allow_html=True)
 
 
-def impact_cards(items):
+def impact_cards(items, cols=2):
     """效益大數字卡。items：[dict(title, number, before, after, note, ai:bool)]。"""
     html = ''.join(
         f'<div class="{"ai" if it.get("ai") else ""}"><div class="t">{_e(it["title"])}</div><div class="n">{_e(it["number"])}</div>'
-        + (f'<span class="vs">{_e(it["before"])} <span style="color:#6366F1">➔</span> {_e(it["after"])}</span>' if it.get('before') else '')
+        + (f'<span class="vs">{_e(it["before"])}'
+           + (f' <span style="color:#6366F1">➔</span> {_e(it["after"])}' if it.get('after') else '') + '</span>' if it.get('before') else '')
         + (f'<span class="s">{_e(it["note"])}</span>' if it.get('note') else '') + '</div>'
         for it in items)
-    st.markdown(f'<div class="cf-impact">{html}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cf-impact{" three" if cols == 3 else ""}">{html}</div>', unsafe_allow_html=True)
 
 
 def heat_legend(low='人力充裕', high='極度缺工'):

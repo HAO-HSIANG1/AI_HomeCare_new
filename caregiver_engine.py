@@ -1222,6 +1222,61 @@ def _google_transit_key(lat1, lon1, lat2, lon2, departure=None, arrival=None):
     )
 
 
+def _transit_disk_key(memo_key):
+    """記憶體鍵（含日期）→ 硬碟鍵：起訖點＋出發/抵達＋星期幾＋HH:MM，不存日期。"""
+    lat1, lon1, lat2, lon2, _mode, departure, arrival = memo_key
+    kind, value = ('dep', departure) if departure else ('arr', arrival)
+    if not value:
+        return None
+    try:
+        ts = pd.Timestamp(value)
+        ts = ts.tz_localize('Asia/Taipei') if ts.tzinfo is None else ts.tz_convert('Asia/Taipei')
+    except (ValueError, TypeError):
+        return None
+    return (lat1, lon1, lat2, lon2, 'TRANSIT', kind, int(ts.isoweekday()), ts.strftime('%H:%M'))
+
+
+def _fill_transit_from_disk(pairs, state):
+    """先用硬碟快取補進本次 memo；回傳仍需查 Google 的 pairs。"""
+    memo_keys = {}
+    for pair in pairs:
+        memo_keys.setdefault(_google_transit_key(*pair), pair)
+    by_disk = {}
+    for memo_key in memo_keys:
+        disk_key = _transit_disk_key(memo_key)
+        if disk_key is not None:
+            by_disk.setdefault(disk_key, []).append(memo_key)
+    try:
+        from persistent_cache import read_transit
+        found = read_transit(list(by_disk))
+    except Exception:
+        found = {}
+    for disk_key, minutes in found.items():
+        for memo_key in by_disk[tuple(disk_key)]:
+            state['memo'][memo_key] = float(minutes)
+    state['disk_hits'] = state.get('disk_hits', 0) + sum(len(by_disk[tuple(k)]) for k in found)
+    return [pair for key, pair in memo_keys.items() if key not in state['memo']]
+
+
+def _save_transit_to_disk(values):
+    rows = {}
+    for memo_key, minutes in values.items():
+        disk_key = _transit_disk_key(memo_key)
+        if disk_key is not None:
+            rows[disk_key] = minutes
+    try:
+        from persistent_cache import write_transit
+        write_transit(rows)
+    except Exception:
+        pass
+
+
+def google_query_summary():
+    """本次排班的 Google 大眾運輸查詢統計：實際查詢 elements、硬碟快取命中筆數。"""
+    state = _GOOGLE_QUERY_STATE.get() or {}
+    return {'queried': int(state.get('count', 0)), 'disk_hits': int(state.get('disk_hits', 0))}
+
+
 def _google_waypoint(lat, lon):
     return {
         'waypoint': {
@@ -1410,6 +1465,11 @@ def prefetch_google_transit_pairs(required_pairs):
     if not missing:
         return
 
+    # 先查硬碟快取（星期幾＋時刻相同就沿用），跨次排班不再重查 Google，結果才會一致。
+    missing = _fill_transit_from_disk(missing, state)
+    if not missing:
+        return
+
     jobs = _build_google_matrix_jobs(missing)
     total_elements = sum(len(origins) * len(destinations) for origins, destinations, _, _ in jobs)
     if state['count'] + total_elements > state['limit']:
@@ -1425,12 +1485,13 @@ def prefetch_google_transit_pairs(required_pairs):
     workers = min(GOOGLE_TRANSIT_MAX_WORKERS, max(1, len(jobs)))
     if workers == 1:
         for origins, destinations, dep, arr in jobs:
-            state['memo'].update(
-                _fetch_google_transit_matrix_raw(origins, destinations, dep, arr)
-            )
+            fetched = _fetch_google_transit_matrix_raw(origins, destinations, dep, arr)
+            state['memo'].update(fetched)
+            _save_transit_to_disk(fetched)
         return
 
     errors = []
+    fetched_all = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
         future_map = {
             pool.submit(
@@ -1444,10 +1505,13 @@ def prefetch_google_transit_pairs(required_pairs):
         }
         for future in as_completed(future_map):
             try:
-                state['memo'].update(future.result())
+                fetched = future.result()
+                state['memo'].update(fetched)
+                fetched_all.update(fetched)
             except Exception as exc:
                 errors.append(str(exc))
 
+    _save_transit_to_disk(fetched_all)   # 部分批次失敗時，成功的那幾批仍先存起來
     if errors:
         raise RuntimeError('Google Transit 批次查詢失敗：' + errors[0])
 

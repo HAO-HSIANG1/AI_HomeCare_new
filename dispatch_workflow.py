@@ -168,6 +168,53 @@ class WorkflowStore:
             out.setdefault(cg, set()).add(day)
         return out
 
+DEMO_STORE_DIR = 'output_results/demo_workflow'
+
+
+def fresh_demo_store_path(folder=DEMO_STORE_DIR, keep_hours=24):
+    """示範模式用的空白工作紀錄檔路徑。
+
+    示範模式下所有請假、固定人選、上班日都寫到這個暫存檔，不讀也不改正式的
+    dispatch_workflow.sqlite3，所以每次開啟示範模式都從同樣的空白狀態開始。
+    順手刪掉超過 keep_hours 小時沒動過的舊示範檔。
+    """
+    import time
+    import uuid
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    cutoff = time.time() - keep_hours * 3600
+    for old in folder.glob('*.sqlite3'):
+        try:
+            if old.stat().st_mtime < cutoff:
+                old.unlink()
+        except OSError:
+            pass
+    return str(folder / f'{uuid.uuid4().hex}.sqlite3')
+
+
+def discard_demo_store(path):
+    """刪掉示範模式的暫存紀錄檔；只刪 DEMO_STORE_DIR 底下的檔案，避免誤刪正式紀錄。"""
+    if not path:
+        return
+    target = Path(path).resolve()
+    if target.parent != Path(DEMO_STORE_DIR).resolve():
+        return
+    import gc
+    gc.collect()          # Windows：尚未回收的 sqlite 連線會鎖住檔案
+    try:
+        target.unlink()
+    except OSError:
+        pass              # 刪不掉也沒關係：下次是新檔名，不會沿用；超過 24 小時會被清掉
+
+
+def history_summary(store, start, end, lookback=10):
+    """排班前提示「本次會套用」的歷史紀錄數量：期間內請假筆數、已審核固定人選案數、跨月上班種子人數。"""
+    s, e = pd.Timestamp(start).strftime('%Y-%m-%d'), pd.Timestamp(end).strftime('%Y-%m-%d')
+    blocks = [b for b in store.blocks() if str(b['start'])[:10] <= e and str(b['end'])[:10] >= s]
+    return {'blocks': len(blocks), 'primary': len(store.primary_map()),
+            'seed_workers': len(store.recent_workdays(start, lookback=lookback))}
+
+
 def attach_blocks(frame, store):
     result=frame.copy();items=store.blocks()
     result['臨時不可排時段']=[json.dumps([b for b in items if b['cg']==str(cg)],ensure_ascii=False) for cg in result.get('居服員ID',[])]

@@ -59,7 +59,8 @@ from source_fields import source_primary_map, normalize_clients
 from agency_rules import payroll_tables, primary_guard, leave_overlap, consecutive_workdays_error
 from osrm_client import ensure_ready
 from schedule_output import build_schedule_output, schedule_excel_bytes, MAIN_COLUMNS
-from dispatch_workflow import WorkflowStore, attach_blocks, blocked_reason, render_leave
+from dispatch_workflow import (WorkflowStore, attach_blocks, blocked_reason, render_leave,
+                               fresh_demo_store_path, discard_demo_store, history_summary)
 from substitute_rank import RULE_TEXT as SUBSTITUTE_RULE_TEXT
 from issue_center import unassigned_issues, assigned_overlaps, transition_issues, issue_summary, GROUP_NAMES as ISSUE_GROUP_NAMES
 
@@ -119,6 +120,7 @@ from caregiver_engine import (
     DEFAULT_EXCEL_PATH,
     google_key_is_configured,
     begin_travel_query_run,
+    google_query_summary,
     set_google_queries_enabled,
     load_agency_workbook,
     load_identity_mapping,
@@ -335,7 +337,7 @@ from careflow_ui import (render_brand, section_title, render_summary, chips, flo
                          go_to_module, empty_module, big_tabs,
                          reason_picker, reason_category, compose_reason, REASON_HINT, CHANGE_REASONS,
                          render_header, side_brand, ready_cards, kpi_cards, conn_card, badges, reason_badge,
-                         time_shift_html, line_preview, line_preview_empty, impact_cards,
+                         time_shift_html, line_preview, line_preview_empty, impact_cards, advice_cards,
                          FONT_SCALES, render_stepper, result_hero, family_heading, import_card,
                          RUN_STEPS, run_stage_of, run_steps_markdown, run_card_html, signoff_head_html, badge_html)
 from import_health import build_health_items, health_status, LIGHT_ICON, RED as _HEALTH_RED
@@ -381,6 +383,7 @@ _SETTING_DEFAULTS = {
     'transit_fallback_enabled': True,
     'osrm_source_choice': '本機 Docker' if _configured_local else '雲端 Render',
     'cf_font_scale': '大',          # 方案 C 預設「大」字體；頁首可切換 標準／大／特大
+    'demo_mode': False,             # 示範模式：只用 Excel，不讀也不寫正式的請假／固定人選／上班日紀錄
 }
 _PERSISTED_KEYS = list(_SETTING_DEFAULTS) + ['agency_range_end', '_period_signature', 'show_identity_names', 'export_identity_mode',
                                               'impact_manual_hours', 'impact_ai_minutes', 'impact_travel_cut',
@@ -574,6 +577,23 @@ def render_dispatch_settings():
             st.info('資格直接讀取員工「取得資格」。個案「是否失智」填是／否；BA08須有足部照護訓練。歷史首選填員工編號，匯入後直接沿用；年資由到職日計算作為加分。')
             st.caption('難度規則為機構參考：核定等級與失能／障礙程度取最大係數；身障類別只提供提示。')
             st.caption('SA10全部自費，一單位以350元估價；其餘項目依Service_code單價。服務薪資自動依機構時薪、轉場工資與加班制度估算。')
+
+
+def _reset_demo_store():
+    """切換示範模式或按「清空示範紀錄」：丟掉舊的示範暫存檔，下次從空白狀態開始。"""
+    discard_demo_store(st.session_state.pop('_demo_store_path', None))
+
+
+with _sidebar_rules:
+    st.toggle('🎬 示範模式（只用 Excel）', key='demo_mode', on_change=_reset_demo_store,
+              help='開啟後不套用正式紀錄裡的請假、已審核固定人選、跨月連續上班天數，'
+                   '這次操作產生的紀錄也只存在暫存檔，不會改到正式資料。同一份 Excel 每次排班結果相同，適合比賽展示。')
+    if st.session_state['demo_mode']:
+        if not st.session_state.get('_demo_store_path'):
+            st.session_state['_demo_store_path'] = fresh_demo_store_path()
+        st.caption('示範模式中：正式紀錄不受影響。')
+        st.button('🧹 清空示範紀錄', key='demo_store_clear', on_click=_reset_demo_store, width='stretch',
+                  help='把示範模式中登錄的請假、採用的固定人選等清掉，回到只用 Excel 的狀態。')
 
 
 _rules_changed = any(st.session_state.get(_k) != _SETTING_DEFAULTS.get(_k)
@@ -1245,6 +1265,8 @@ def _current_input_signature():
     signature.update(repr(sorted({**__import__('caregiver_engine').TRANSIT_FALLBACK,
                                   'enabled': __import__('caregiver_engine').transit_fallback_enabled()}.items())).encode())
     signature.update(st.session_state.get('CAREFLOW_OSRM_MOTORCYCLE_HOST',os.getenv('CAREFLOW_OSRM_MOTORCYCLE_HOST','https://careflow-osrm-motorcycle.onrender.com')).encode())
+    # 示範模式切換＝換了一份工作紀錄，舊班表要清掉
+    signature.update(('demo:' + str(st.session_state.get('_demo_store_path', '')) if st.session_state.get('demo_mode') else 'live').encode())
     return signature.hexdigest()
 
 _live_signature = _current_input_signature()
@@ -1261,7 +1283,11 @@ if st.session_state.get('_result_stale') and _module in (M_IMPORT, M_SCHEDULE):
     st.warning('⚠️ 資料或排班規則已修改，舊班表已清除；請到「② 開始排班」重新排班。')
 
 
-_workflow_store = WorkflowStore(config.institution_key)
+# 示範模式：改用這個 session 專屬的空白暫存檔（路徑在側邊欄建立，要早於輸入簽章計算），
+# 所有讀寫（請假、固定人選、上班日）都不碰正式的 dispatch_workflow.sqlite3。
+_workflow_store = (WorkflowStore(config.institution_key, st.session_state['_demo_store_path'])
+                   if st.session_state.get('demo_mode') and st.session_state.get('_demo_store_path')
+                   else WorkflowStore(config.institution_key))
 config.client_primary_map = source_primary_map(st.session_state['edit_cl'],
     set(st.session_state['edit_cg']['居服員ID'].astype(str)), _workflow_store.primary_map())
 config.primary_profiles = {str(r['居服員ID']):r.to_dict() for _,r in attach_blocks(st.session_state['edit_cg'],_workflow_store).iterrows()}
@@ -1305,6 +1331,17 @@ def _render_run_controls(rerun=False):
     _est_text = f'預估約 {max(1, round(_est_seconds)):,} 秒' if _est_seconds else '預估約 3 秒'
     if not rerun:
         st.caption('先依歷史首選排固定週型，再延展至期間結束。隔週與計畫異動分別建立週型；請假、資格日期、月加班及公車／捷運按實際日期核對。')
+    try:
+        _hist = history_summary(_workflow_store, range_start, range_end)
+    except Exception:
+        _hist = None
+    if _hist is not None:
+        _hist_text = (f"請假 {_hist['blocks']} 筆、已審核固定人選 {_hist['primary']} 案、"
+                      f"跨月上班種子 {_hist['seed_workers']} 人")
+        if st.session_state.get('demo_mode'):
+            st.caption(f'🎬 示範模式：只用 Excel；這次示範中新增的紀錄：{_hist_text}。')
+        elif any(_hist.values()):
+            st.caption(f'📌 本次會套用歷史紀錄：{_hist_text}。要每次結果都一樣，請開側邊欄的「示範模式」。')
     with st.container(key='cf_rerun' if rerun else 'cfai_xl_run'):
         st.button(f"{'🔁 重新排班一次' if rerun else '✨ 開始排班'}（{_est_text}）", type='secondary' if rerun else 'primary',
                   width='stretch', key='run_full_period', on_click=_request_run,
@@ -1312,6 +1349,9 @@ def _render_run_controls(rerun=False):
     _steps = st.session_state.get('_last_run_steps')
     if _steps:
         st.caption('上次執行：' + ' · '.join(f'{name} {sec:.1f} 秒' for name, sec in _steps.items()))
+    _gq = st.session_state.get('_last_google_summary')
+    if _gq and (_gq['queried'] or _gq['disk_hits']):
+        st.caption(f"上次公車／捷運交通：沿用硬碟快取 {_gq['disk_hits']:,} 段、新查 Google {_gq['queried']:,} 段。")
 
 _tasks_preview_df = st.session_state["edit_tasks"]
 
@@ -1444,6 +1484,7 @@ if _module == M_SCHEDULE:
                 st.session_state.pop(_stale_key, None)       # 新班表要重新簽核
             st.session_state['_last_run_seconds'] = time.perf_counter() - _run_t0
             st.session_state['_last_run_steps'] = dict(_run_state['times'])
+            st.session_state['_last_google_summary'] = google_query_summary()
             st.session_state['_run_done_toast'] = st.session_state['_last_run_seconds']
             new_dispatch_completed = True
             st.rerun()
@@ -2878,87 +2919,129 @@ if "last_result" in st.session_state:
                     show_table(pd.DataFrame(_prop_details), width="stretch", hide_index=True)
         subhead('個案與居服員媒合、候選人推薦')
 
-    # ---------- 05 人力與效益分析（主管） ----------
+    # ---------- 05 主管報表：一頁式報告 ----------
     if _module == M_ANALYTICS:
         module_header(M_ANALYTICS)
-        st.caption(f'統計範圍：{_scope_label}。本頁只呈現管理數據，不會更動班表；排班與異常處理請回到 01～04。')
+        st.caption(f'統計範圍：{_scope_label}。本頁只呈現管理數據，不會更動班表；排班與異常處理請回到 ①～④。')
         _hours_total = pd.to_numeric(daily_payroll.get('服務工時', pd.Series(dtype=float)), errors='coerce').sum() if not daily_payroll.empty else 0.0
         _travel_hours = pd.to_numeric(daily_payroll.get('轉場工時', pd.Series(dtype=float)), errors='coerce').sum() if not daily_payroll.empty else 0.0
         _active_people = daily_payroll['居服員ID'].nunique() if not daily_payroll.empty and '居服員ID' in daily_payroll else 0
         _all_people = len(res['df_cg']) if res.get('df_cg') is not None else 0
 
-        # ---------- 排班效益：兩大數字，估算依據可展開調整 ----------
-        subhead('排班效益')
-        st.session_state.setdefault('impact_manual_hours', 4.0)
-        st.session_state.setdefault('impact_ai_minutes', 3.0)
-        st.session_state.setdefault('impact_travel_cut', 12.5)
-        _manual_h = float(st.session_state['impact_manual_hours'])
-        _ai_min = float(st.session_state['impact_ai_minutes'])
-        _cut = float(st.session_state['impact_travel_cut']) / 100.0
-        _eff = max(0.0, 1 - _ai_min / (_manual_h * 60)) if _manual_h > 0 else 0.0
-        _days = max(1, (pd.Timestamp(res.get('range_end') or range_end) - pd.Timestamp(res.get('range_start') or range_start)).days + 1)
-        _travel_month = _travel_hours * 30.0 / _days                       # 換算成每月（30 天）轉場工時
-        _saved_month = _travel_month * _cut / (1 - _cut) if 0 <= _cut < 1 else 0.0   # 人工基準＝AI 轉場 ÷ (1 − 減少比例)
-        _ran = st.session_state.get('_last_run_seconds')
-        impact_cards([
-            dict(title='排班效率提升', number=f'{int(_eff * 100)}%', before=f'人工 {_manual_h:g} 小時', after=f'AI {_ai_min:g} 分鐘', ai=True,
-                 note=('本次 AI 實際運算 ' + (f'{_ran:.1f} 秒' if _ran else '（尚未記錄）') + '；AI 時間含居督覆核。')),
-            dict(title='居服員車程空轉減少', number=f'{_cut * 100:.1f}%', before=f'每月省 {_saved_month:,.0f} 小時', after='回流照顧服務',
-                 note=f'本期 AI 班表轉場 {_travel_hours:,.1f} 小時（{_days} 天）→ 每月約 {_travel_month:,.0f} 小時。'),
-        ])
-        with st.expander('⚙️ 效益估算依據（可依機構實際情況調整）', expanded=False):
-            _ia, _ib, _ic = st.columns(3)
-            _ia.number_input('人工排班所需時間（小時）', min_value=0.5, max_value=200.0, step=0.5, key='impact_manual_hours')
-            _ib.number_input('AI 排班＋覆核時間（分鐘）', min_value=0.5, max_value=600.0, step=0.5, key='impact_ai_minutes')
-            _ic.number_input('AI 路線最佳化減少的空轉比例（%）', min_value=0.0, max_value=60.0, step=0.5, key='impact_travel_cut')
-            st.caption('排班效率＝1 −（AI 時間 ÷ 人工時間）。每月省下的車程＝本班表每月轉場工時 × 比例 ÷（1 − 比例），'
-                       '即「人工排班基準轉場 − AI 轉場」。預設值為試辦基準，正式報告請以機構實測數據替換。')
-
-        subhead('服務產出與營運效益')
-        e1, e2, e3, e4 = st.columns(4)
-        e1.metric("已排服務時數", f"{_hours_total:,.1f} 小時", help="已派服務的服務工時加總（不含轉場）。")
-        e2.metric("人力配置", f"{_active_people} ／ {_all_people} 人",
-                  help="有排到班的居服員／全部居服員。")
-        e3.metric("人均服務時數", f"{(_hours_total / _active_people):,.1f} 小時" if _active_people else "—",
-                  help="已排服務時數 ÷ 有排班的居服員人數。")
-        e4.metric("轉場工時", f"{_travel_hours:,.1f} 小時", help="前案到下一案的轉場工時加總；首案通勤及末案返家不納入。")
-        k4, k5, k6 = st.columns(3)
-        k4.metric(
-            ("已知營收小計（單價未齊）" if finance_partial else "預估服務總營收"), ("單價待補齊" if pd.isna(total_revenue) else f"{total_revenue:,.0f} 元"),
-            help="已派服務的 Service_code 目前給付價格(元) × 服務次數加總；缺單價時僅顯示已知小計。",
-        )
-        k5.metric(
-            '預估居服員總薪資', ('工時待確認' if pd.isna(total_salary) else f'{total_salary:,.0f} 元'),
-            help='服務時數×時薪＋轉場次數×轉場工資＋一般工作日加班加給；與服務營收獨立。',
-        )
-        _margin_ok = not (finance_partial or pd.isna(total_revenue) or pd.isna(total_salary))
-        k6.metric('營收扣除薪資', f"{(total_revenue - total_salary):,.0f} 元" if _margin_ok else '資料待補齊',
-                  delta=(f"每服務小時 {(total_revenue - total_salary) / _hours_total:,.0f} 元" if _margin_ok and _hours_total else None),
-                  delta_color='off', help='預估服務營收 − 預估居服員薪資；未含其他營運成本，僅供管理參考。')
-        if finance_partial:
-            st.warning('部分已派服務缺單價；營收顯示已知小計。薪資仍依服務工時與有效轉場獨立估算。')
-
+        import manager_report as _mr
         from dashboard_metrics import build_dashboard
-        from dashboard_view import render_dashboard
+        from dashboard_view import render_dashboard, render_demand_heat
         try:
             _dashboard = build_dashboard(df_tasks, _effective_for_kpi, _pending_diagnostics, task_payroll, daily_payroll,
                                          monthly_payroll, df_route_result, config.client_primary_map, caregivers=res.get('df_cg'))
-            render_dashboard(_dashboard, caregiver_label, client_label)
         except Exception as exc:
-            st.warning('儀錶板暫時無法產生，其他班表功能不受影響。原因：' + str(exc))
+            _dashboard = None
+            st.warning('報表資料暫時無法產生，其他班表功能不受影響。原因：' + str(exc))
 
-        subhead('居服員工時與薪資')
-        with st.expander('每日與每月工資估算', expanded=False):
+        # ---------- 頂部：三個大數字 ----------
+        st.session_state.setdefault('impact_manual_hours', 4.0)
+        st.session_state.setdefault('impact_ai_minutes', 3.0)
+        st.session_state.setdefault('impact_travel_cut', 12.5)
+        _rs = res.get('range_start') or range_start
+        _re = res.get('range_end') or range_end
+        _days = max(1, (pd.Timestamp(_re) - pd.Timestamp(_rs)).days + 1)
+        _sum = _dashboard['summary'] if _dashboard else {'total': 0, 'assigned': 0}
+        _cards = _mr.headline_cards(st.session_state['impact_manual_hours'], st.session_state['impact_ai_minutes'],
+                                    st.session_state['impact_travel_cut'], _travel_hours, _days,
+                                    _sum['total'], _sum['assigned'], st.session_state.get('_last_run_seconds'))
+        impact_cards(_cards, cols=3)
+        with st.expander('⚙️ 調整假設（效益估算依據，可依機構實際情況調整）', expanded=False):
+            _ia, _ib, _ic = st.columns(3)
+            _ia.number_input('人工排班所需時間（小時）', min_value=0.5, max_value=200.0, step=0.5, key='impact_manual_hours')
+            _ib.number_input('AI 排班＋覆核時間（分鐘）', min_value=0.5, max_value=600.0, step=0.5, key='impact_ai_minutes')
+            _ic.number_input('AI 路線最佳化減少的交通比例（%）', min_value=0.0, max_value=60.0, step=0.5, key='impact_travel_cut')
+            st.caption('省下的排班工時＝人工時間 − AI 時間。每月省下的車程＝本班表每月轉場工時 × 比例 ÷（1 − 比例），'
+                       '即「人工排班基準轉場 − AI 轉場」。完成率＝已派筆數 ÷ 全部服務筆數（實際值，不是假設）。'
+                       '預設值為試辦基準，正式報告請以機構實測數據替換。')
+
+        if _dashboard:
+            # ---------- 中段：需求熱圖、人力負荷分布 ----------
+            subhead('需求熱圖：什麼時候最缺人')
+            render_demand_heat(_dashboard, advice=False)
+
+            subhead('人力負荷分布：工作量有沒有平均')
+            _load = _mr.load_distribution(_dashboard['workload'], caregiver_label)
+            _ls = _mr.load_summary(_dashboard['workload'])
+            if _load.empty:
+                st.info('目前沒有可分析的工時資料。')
+            else:
+                _bars = _load.loc[:, [c for c in _mr.STATUS_ORDER if _load[c].sum() > 0]]
+                st.bar_chart(_bars, height=260, y_label='總工時（小時）', x_label='',
+                             color=[_mr.STATUS_COLORS[c] for c in _bars.columns])
+                st.caption(f"有排班 {_active_people} ／ 全部 {_all_people} 人；每人本期總工時 {_ls['min_hours']:.1f}～{_ls['max_hours']:.1f} 小時"
+                           f"（含轉場）。接近月加班上限 {_ls['near']} 人、超過 {_ls['over']} 人。")
+
+            # ---------- 下段：AI 增聘和調派建議 ----------
+            subhead('AI 增聘和調派建議')
+            advice_cards(_mr.staffing_advice(_dashboard, caregiver_label))
+            st.caption('建議依「需求 ÷ 可上班人數」與每人月加班使用率計算，只供參考，不會自動更動班表。')
+
+            # ---------- 下載報告 ----------
+            subhead('下載報告')
+
+            def _export_label(value):
+                ident = str(value).strip()
+                return ident + '｜' + _caregiver_names[ident] if _export_names and ident in _caregiver_names else ident
+            _heat, _heat_title, _heat_fmt = _mr.heat_view(_dashboard)
+            _fig_args = (f'{_period_title(_rs, _re)} 主管報表', _scope_label, _cards, _heat, _heat_title, _heat_fmt,
+                         _mr.load_distribution(_dashboard['workload'], _export_label),
+                         _mr.staffing_advice(_dashboard, _export_label))
+            _dl1, _dl2, _dl3 = st.columns([1, 1, 2])
+            with _dl1:
+                download_button_quiet('📄 下載 PDF', lambda: _mr.figure_bytes(_mr.build_report_figure(*_fig_args), 'pdf'),
+                                      'CareFlow_主管報表.pdf', 'application/pdf', key='mgr_report_pdf', width='stretch')
+            with _dl2:
+                download_button_quiet('🖼️ 下載 PNG', lambda: _mr.figure_bytes(_mr.build_report_figure(*_fig_args), 'png'),
+                                      'CareFlow_主管報表.png', 'image/png', key='mgr_report_png', width='stretch')
+            _dl3.caption('一頁 A4：三大數字、需求熱圖、人力負荷分布、AI 建議。'
+                         + ('居服員以姓名顯示（依個資匯出設定）。' if _export_names else '居服員以編號顯示（依個資匯出設定）。'))
+
+        # ---------- 附錄：詳細數據 ----------
+        subhead('附錄：詳細數據')
+        _ap1, _ap2, _ap3, _ap4 = st.tabs(['營運效益', '排班儀錶板', '工時與薪資', '轉場明細'])
+        with _ap1:
+            e1, e2, e3, e4 = st.columns(4)
+            e1.metric("已排服務時數", f"{_hours_total:,.1f} 小時", help="已派服務的服務工時加總（不含轉場）。")
+            e2.metric("人力配置", f"{_active_people} ／ {_all_people} 人",
+                      help="有排到班的居服員／全部居服員。")
+            e3.metric("人均服務時數", f"{(_hours_total / _active_people):,.1f} 小時" if _active_people else "—",
+                      help="已排服務時數 ÷ 有排班的居服員人數。")
+            e4.metric("轉場工時", f"{_travel_hours:,.1f} 小時", help="前案到下一案的轉場工時加總；首案通勤及末案返家不納入。")
+            k4, k5, k6 = st.columns(3)
+            k4.metric(
+                ("已知營收小計（單價未齊）" if finance_partial else "預估服務總營收"), ("單價待補齊" if pd.isna(total_revenue) else f"{total_revenue:,.0f} 元"),
+                help="已派服務的 Service_code 目前給付價格(元) × 服務次數加總；缺單價時僅顯示已知小計。",
+            )
+            k5.metric(
+                '預估居服員總薪資', ('工時待確認' if pd.isna(total_salary) else f'{total_salary:,.0f} 元'),
+                help='服務時數×時薪＋轉場次數×轉場工資＋一般工作日加班加給；與服務營收獨立。',
+            )
+            _margin_ok = not (finance_partial or pd.isna(total_revenue) or pd.isna(total_salary))
+            k6.metric('營收扣除薪資', f"{(total_revenue - total_salary):,.0f} 元" if _margin_ok else '資料待補齊',
+                      delta=(f"每服務小時 {(total_revenue - total_salary) / _hours_total:,.0f} 元" if _margin_ok and _hours_total else None),
+                      delta_color='off', help='預估服務營收 − 預估居服員薪資；未含其他營運成本，僅供管理參考。')
+            if finance_partial:
+                st.warning('部分已派服務缺單價；營收顯示已知小計。薪資仍依服務工時與有效轉場獨立估算。')
+        with _ap2:
+            if _dashboard:
+                render_dashboard(_dashboard, caregiver_label, client_label, show_heat=False, title=None)
+        with _ap3:
             st.caption('服務基本工資＋每次46元轉場工資＋加班加給。轉場與工作緩衝納入工時；首案通勤及末案返家不納入。此為一般工作日估算，休息日／國定假日薪資需另核對。')
             show_table(daily_payroll, hide_index=True, width='stretch')
             show_table(monthly_payroll, hide_index=True, width='stretch')
-        subhead('轉場時間')
-        st.caption('交通依有效派單的每日服務順序計算；首案由員工家／服務起點出發，後續由前一案出發。交通與緩衝分開顯示；不含末案返家及未匯入的其他行程。')
-        with st.expander('每日交通總時間與逐段路線', expanded=False):
+        with _ap4:
+            st.caption('交通依有效派單的每日服務順序計算；首案由員工家／服務起點出發，後續由前一案出發。交通與緩衝分開顯示；不含末案返家及未匯入的其他行程。')
             if not df_route_result.empty:
                 show_table(daily_travel, hide_index=True, width='stretch')
                 show_table(df_route_result[['交通日期','派單居服員','任務ID','交通路段','預估車程(分)','路段緩衝(分)','含緩衝交通時間(分)','交通計算狀態']], hide_index=True, width='stretch')
                 download_button_quiet('下載逐段交通明細 CSV', export_frame(df_route_result).to_csv(index=False).encode('utf-8-sig'), '逐段交通明細.csv', 'text/csv')
+            else:
+                st.info('目前沒有逐段交通資料。')
         step_action_bar(M_ANALYTICS, hint='主管報表只供檢視，不影響班表。')
 
     if _module != M_SCHEDULE:

@@ -8,9 +8,10 @@ def _pct(value):
     return '—' if value is None or pd.isna(value) else f'{value:.1f}%'
 
 
-def render_dashboard(D, caregiver_label=str, client_label=str):
+def render_dashboard(D, caregiver_label=str, client_label=str, show_heat=True, title='📊 排班儀錶板'):
     s = D['summary']
-    st.subheader('📊 排班儀錶板')
+    if title:
+        st.subheader(title)
     st.caption('回答督導最常問的問題：哪裡派不出去、為什麼、誰太累、交通有沒有吃掉工時、哪些案家老是換人。'
                '派單成功率與營收薪資請看上方 KPI。')
 
@@ -29,8 +30,9 @@ def render_dashboard(D, caregiver_label=str, client_label=str):
     tab_gap, tab_load, tab_travel, tab_stable = st.tabs(['什麼時候缺人', '人力負荷', '交通', '固定人選穩定度'])
 
     with tab_gap:
-        _render_demand_heat(st, D)
-        if s['unassigned']:
+        if show_heat:
+            render_demand_heat(D)
+        if s['unassigned'] and show_heat:
             st.markdown('---')
             st.markdown('**哪裡派不出去**')
         if s['unassigned'] == 0:
@@ -101,7 +103,7 @@ def render_dashboard(D, caregiver_label=str, client_label=str):
             st.dataframe(view, hide_index=True, width='stretch')
 
 
-def _render_demand_heat(st, D):
+def render_demand_heat(D, advice=True):
     """排班需求熱圖：什麼星期、哪個時段最需要人（紅＝需求高／吃緊，就多排幾位）。"""
     demand = D.get('heat_demand')
     if demand is None or demand.empty:
@@ -144,7 +146,8 @@ def _render_demand_heat(st, D):
             else:
                 text += f"（{p['值']:.1f}{unit}" + (f"，可上班 {p['可上班']} 位" if p['可上班'] is not None else '') + '）'
             return text
-        _render_staffing_advice(peaks, mode)
+        if advice:
+            _render_staffing_advice(peaks, mode)
         st.caption('最紅的時段：' + '、'.join(one(p) for p in peaks)
                    + '。這些時段建議多排幾位上班（或安排備援待命）；顏色淺的時段人力較寬鬆，可以把可挪動的服務移過去。')
     st.caption('需求含已派與未派的全部服務；服務跨小時會按重疊分鐘拆開。「可上班」依居服員休息日與每日可服務時段計算，不含個別請假。')
