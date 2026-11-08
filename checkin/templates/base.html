@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1F5F7A">
+<meta name="robots" content="noindex">
+<title>HomeCare AI 打卡</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="居服打卡">
+<style>
+/* 手機打卡頁是獨立的 Flask 頁面，讀不到 careflow_ui.py 的樣式；色碼與 careflow_ui.WARM_CSS 的 --cf-* 相同，字級沿用「大」(1.12)。 */
+:root{
+  --cf-s:1.12;
+  --cf-primary:#1F5F7A; --cf-primary-soft:#E3EEF3; --cf-primary-ink:#143F52;
+  --cf-ok:#2F855A; --cf-ok-soft:#E8F4EC;
+  --cf-amber:#B45309; --cf-amber-soft:#FFF6E8; --cf-amber-ink:#92400E; --cf-amber-line:#F3D9B1;
+  --cf-red:#B42318; --cf-red-soft:#FDECEA; --cf-red-ink:#912018;
+  --cf-bg:#FBF7F0; --cf-card:#FFFFFF; --cf-ink:#2B2622; --cf-muted:#6B5E52; --cf-line:#EADFCF; --cf-line-2:#D9CBB6;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--cf-bg);color:var(--cf-ink);font:calc(17px * var(--cf-s))/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif}
+:focus-visible{outline:3px solid var(--cf-primary);outline-offset:3px}
+header{background:var(--cf-primary);color:#fff;padding:calc(14px + env(safe-area-inset-top)) 16px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+header .brand{font-weight:800}
+header .who{font-size:calc(14px * var(--cf-s));display:flex;align-items:center;gap:10px}
+header button{background:transparent;border:1px solid #FFFFFF88;color:#fff;border-radius:999px;padding:5px 12px;font:inherit;font-size:calc(13px * var(--cf-s))}
+main{max-width:560px;margin:0 auto;padding:16px 16px 48px}
+h1{font-size:calc(22px * var(--cf-s));margin:4px 0 2px}
+.sub{color:var(--cf-muted);font-size:calc(14px * var(--cf-s));margin:0 0 14px}
+.card{background:var(--cf-card);border:1px solid var(--cf-line);border-radius:20px;padding:16px;margin-bottom:14px}
+.row{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.time{font-size:calc(24px * var(--cf-s));font-weight:800;font-variant-numeric:tabular-nums}
+.client{font-size:calc(17px * var(--cf-s));font-weight:700;margin-top:2px}
+.meta{color:var(--cf-muted);font-size:calc(14px * var(--cf-s));margin-top:2px;word-break:break-all}
+.pill{display:inline-block;border-radius:999px;padding:3px 10px;font-size:calc(13px * var(--cf-s));font-weight:700;white-space:nowrap;border:1px solid var(--cf-line-2)}
+.s-未開始{background:#fff;color:var(--cf-muted)}
+.s-服務中{background:var(--cf-primary-soft);color:var(--cf-primary-ink);border-color:var(--cf-primary-soft)}
+.s-已完成{background:var(--cf-ok);color:#fff;border-color:var(--cf-ok)}
+.s-未遇{background:var(--cf-amber-soft);color:var(--cf-amber-ink);border-color:var(--cf-amber-line)}
+.log{margin:10px 0 0;padding:0;list-style:none;font-size:calc(14px * var(--cf-s));color:var(--cf-muted)}
+.log li{padding:2px 0}
+.log .flag{color:var(--cf-amber-ink);font-weight:700}
+.actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:14px}
+.btn{appearance:none;border:2px solid transparent;border-radius:14px;padding:14px 8px;font:inherit;font-weight:800;min-height:calc(56px * var(--cf-s));cursor:pointer}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-main{background:var(--cf-primary);color:#fff}
+.btn-out{background:var(--cf-primary-ink);color:#fff}
+.btn-miss{background:#fff;color:var(--cf-amber-ink);border-color:var(--cf-amber-line)}
+.btn-miss.armed{background:var(--cf-amber);color:#fff;border-color:var(--cf-amber)}
+details{margin-top:12px;font-size:calc(15px * var(--cf-s))}
+summary{color:var(--cf-muted);cursor:pointer;padding:4px 0}
+.late{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.late .full{grid-column:1/-1}
+input,select{font:inherit;padding:12px;border:1px solid var(--cf-line-2);border-radius:12px;background:#fff;color:var(--cf-ink);width:100%}
+label{font-size:calc(14px * var(--cf-s));color:var(--cf-muted);display:block;margin-bottom:4px}
+.msg{border-radius:14px;padding:12px 14px;margin-bottom:14px;font-weight:700}
+.msg.ok{background:var(--cf-ok-soft);color:#1D5C3C}
+.msg.err{background:var(--cf-red-soft);color:var(--cf-red-ink)}
+.msg.warn{background:var(--cf-amber-soft);color:var(--cf-amber-ink)}
+.empty{text-align:center;color:var(--cf-muted);padding:36px 16px}
+.geo{font-size:calc(13px * var(--cf-s));color:var(--cf-muted);margin-top:8px;min-height:1.2em}
+.login{max-width:400px;margin:8vh auto 0}
+.login .card{padding:22px}
+.login .btn{width:100%;margin-top:16px}
+.hint{font-size:calc(13px * var(--cf-s));color:var(--cf-muted);margin-top:16px;text-align:center}
+</style>
+</head>
+<body>
+{% block body %}{% endblock %}
+</body>
+</html>

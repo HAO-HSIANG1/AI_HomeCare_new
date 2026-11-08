@@ -12,7 +12,8 @@
     03 衝突與異常處理：班次重疊、轉場不足、未成功派班、條件不符的分類與明細；
        未派案家整案處理（替代方案）；臨時異動（新增、請假、改期、延遲）。
     04 排班結果與覆核：排班完成率、已排與未排班次、警示案件、最終班表與匯出、
-       人工覆寫紀錄。
+       居服員打卡（QR Code、發布今日班表、手機綁定、補登覆核、當日看板）、
+       執行對照（排班 vs 打卡）、人工覆寫紀錄。
     05 人力與效益分析（主管）：工時、負荷分布、轉場時間、人力配置、服務產出與營運效益。
 
 排班結果、交通與薪資等計算在每次畫面重跑時共用（不論目前在哪個模組），只有畫面
@@ -65,6 +66,8 @@ from substitute_rank import RULE_TEXT as SUBSTITUTE_RULE_TEXT
 from issue_center import unassigned_issues, assigned_overlaps, transition_issues, issue_summary, GROUP_NAMES as ISSUE_GROUP_NAMES
 import auth
 import audit_log
+import attendance_reconcile as _att
+from checkin import runner as _checkin_runner, store as _checkin_store
 
 
 from datetime import datetime
@@ -500,6 +503,20 @@ _wake_state = traffic_wake.status(_osrm_host)['status']
 if _wake_state in ('idle', 'stale') or (_wake_state == 'failed' and not st.session_state.get('_osrm_auto_wake')):
     traffic_wake.start(_osrm_host)
 st.session_state['_osrm_auto_wake'] = True
+# 居服員打卡網頁（checkin/，port 8600）跟著 HomeCare AI 在背景啟動，每個程序只啟動一次；登入前就啟動，
+# 居服員打卡不需要有人開著 HomeCare AI 的畫面。CAREFLOW_CHECKIN_AUTOSTART=0 可關閉（打卡網頁另外架在別台主機時）。
+@st.cache_resource(show_spinner=False)
+def _start_checkin_server():
+    try:
+        _status = _checkin_runner.ensure_running()
+        if _status[0]:
+            _checkin_runner.auto_tunnel()       # 沒有固定網址時，預設在背景開外部網址（https），居督到 ④ 時通常已經好了
+        return _status
+    except Exception as exc:          # 打卡網頁起不來不能影響排班
+        return False, str(exc)
+
+
+_checkin_status = _start_checkin_server()
 # 全域頂部輕量 Header（取代原本的大型 Hero Banner）：AI 運算中樞＝交通路網主機的連線狀態。
 _font_scale = FONT_SCALES.get(st.session_state.get('cf_font_scale') or '大', 1.12)
 _head_col, _font_col = st.columns([5.4, 1.6], vertical_alignment='center')
@@ -5762,6 +5779,325 @@ if "last_result" in st.session_state:
                     st.rerun()
 
         _source_update_download()
+
+        # ---- 居服員 QR 打卡（checkin/）：網址與 QR Code、發布今日班表、手機綁定、補登覆核、當日打卡看板 ----
+        subhead('📱 居服員打卡')
+        st.caption('居服員用手機掃 QR Code 打卡：第一次輸入員工編號就綁定那支手機，之後打開就看到今天的班，按「上班」「下班」「未遇」。'
+                   '打卡時間一律用主機時間；打卡紀錄只能新增，更正要在手機上「補登」，再由居督在這裡覆核。')
+        _checkin_missing = _checkin_runner.missing_packages()
+        if 'flask' in _checkin_missing:
+            st.warning('這台主機還沒安裝打卡網頁需要的套件（' + '、'.join(_checkin_missing) + '），居服員暫時打不開打卡頁；'
+                       '班表發布與看板仍可使用。請執行 `pip install -r requirements.txt` 後重新開啟 HomeCare AI。')
+        elif not _checkin_runner.autostart_enabled():
+            st.caption('打卡網頁由另一個服務執行（CAREFLOW_CHECKIN_AUTOSTART=0，例如 docker-compose 的 checkin 服務）。')
+        elif not _checkin_status[0]:
+            st.warning('打卡網頁沒有啟動，居服員暫時打不開打卡頁；班表發布與看板仍可使用。原因：' + _checkin_status[1])
+        _checkin_today = _checkin_store.now().date()
+        _notice = st.session_state.pop('_checkin_notice', None)
+        if _notice:
+            getattr(st, _notice[0])(_notice[1])
+
+        def _md_plain(text):
+            """居服員在手機上輸入的文字（補登原因）放進 markdown 前先跳脫，避免被當成格式或連結。"""
+            return re.sub(r'([\\`*_{}\[\]()#+\-.!|<>~])', r'\\\1', str(text))
+
+        def _checkin_audit(action, **detail):
+            audit_log.record('checkin', account=(_user or {}).get('username', 'local'), action=action, **detail)
+
+        def _checkin_publish(day):
+            try:
+                _n, _removed = _checkin_store.publish_shifts(df_final, day, _client_names)
+            except Exception as exc:
+                st.session_state['_checkin_notice'] = ('error', '發布失敗，手機上仍是上一次發布的班表。原因：' + str(exc))
+                return
+            _checkin_audit('publish', day=day.isoformat(), rows=_n, removed=_removed)
+            st.session_state['_checkin_notice'] = ('success', f'已發布 {day:%Y/%m/%d} 的班 {_n} 筆'
+                                                   + (f'，移除 {_removed} 筆已改掉的班' if _removed else '') + '。')
+
+        def _checkin_device(device_id, action):
+            if action == 'revoke':
+                _who = _checkin_store.revoke_device(device_id)
+            else:
+                _who = _checkin_store.decide_device(device_id, action == 'approve')
+            if _who is None:
+                st.session_state['_checkin_notice'] = ('warning', '這支手機的狀態已經變了，請看最新的清單。')
+                return
+            _checkin_audit('device_' + action, target=_who, device=int(device_id))
+            _done = {'approve': '已核准', 'reject': '已拒絕', 'revoke': '已解除'}[action]
+            st.session_state['_checkin_notice'] = ('success', f'{_done} {caregiver_label(_who)} 的手機。')
+
+        def _checkin_review(punch_id, approve):
+            _err = _checkin_store.review_punch(punch_id, approve, account=(_user or {}).get('username', 'local'))
+            if _err:
+                st.session_state['_checkin_notice'] = ('warning', _err)
+                return
+            _checkin_audit('review', punch=int(punch_id), decision='approve' if approve else 'reject')
+            st.session_state['_checkin_notice'] = ('success', '補登已' + ('核准。' if approve else '退回，對照時不採用。'))
+
+        def _checkin_tunnel(start):
+            """開啟或關閉外部網址（Cloudflare 臨時通道）。"""
+            if not start:
+                _checkin_runner.stop_tunnel()
+                _checkin_audit('tunnel', state='stopped')
+                st.session_state['_checkin_notice'] = ('info', '外部網址已停止，原本的網址和 QR Code 不能再用。')
+                return
+            # 在背景開，畫面不用卡住等 10～40 秒；下面的網址區會自動更新
+            _checkin_runner.start_tunnel_async()
+            _checkin_audit('tunnel', state='started')
+
+        _pending_devices = _checkin_store.devices(_checkin_store.DEVICE_PENDING)
+        _pending_punches = _checkin_store.pending_reviews()
+        if _pending_devices:
+            st.info(f'🔔 有 {len(_pending_devices)} 支新手機等你核准，請到下方「手機綁定」。')
+        if _checkin_status[0]:
+            _checkin_runner.auto_tunnel()        # 沒有固定網址時預設用外部網址（背景開啟，只試一次）
+        st.markdown('##### ① 發布班表')
+        _days = sorted(pd.to_datetime(df_final['日期'], errors='coerce').dropna().dt.date.unique())
+        _published = {d: (n, at) for d, n, at in _checkin_store.published_days()}
+        _today_rows = int((pd.to_datetime(df_final['日期'], errors='coerce').dt.date == _checkin_today).sum())
+        if st.session_state.get('demo_mode'):
+            st.info('示範模式不會發布到正式的打卡網頁。要試打卡，請用下面「試用：建立一筆示範班」。')
+        elif _checkin_today in _days:
+            _p = _published.get(_checkin_today.isoformat())
+            st.caption(f'今天（{_checkin_today:%Y/%m/%d}）班表有 {_today_rows:,} 筆服務。'
+                       + (f'上次發布：{_p[1][5:16]}，{_p[0]:,} 筆。改派、代班後請再按一次。' if _p else '還沒發布。'))
+            st.button(f'📲 發布今日班表（{_checkin_today:%m/%d}）', key='checkin_publish_today', type='primary',
+                      on_click=_checkin_publish, args=(_checkin_today,), width='stretch')
+        else:
+            st.info(f'今天（{_checkin_today:%Y/%m/%d}）不在這次班表期間內，沒有今天的班可以發布。')
+        if _days and not st.session_state.get('demo_mode'):
+            with st.expander('發布其他日期（例如先發布明天的班）'):
+                _other = st.selectbox('日期', _days, key='checkin_publish_day', format_func=lambda d: f'{d:%Y/%m/%d}'
+                                      + (f'（已發布 {_published[d.isoformat()][0]:,} 筆）' if d.isoformat() in _published else ''))
+                st.button('發布這一天', key='checkin_publish_other', on_click=_checkin_publish, args=(_other,))
+                st.caption('手機只顯示「今天」的班；先發布的班到當天才會出現。')
+        with st.expander('試用：建立一筆示範班'):
+            st.caption('替一位居服員建立「現在開始、60 分鐘」的示範班，用手機實際試打卡。示範班不進執行對照，可以一鍵清除。')
+            _cg_ids = sorted(set(df_final['最終派單居服員'].dropna().astype(str)) - {'未指派', '待安排', ''})
+            _demo_cg = st.selectbox('居服員', _cg_ids, key='checkin_demo_cg', format_func=caregiver_label) if _cg_ids else None
+            _d1, _d2 = st.columns(2)
+            if _d1.button('➕ 建立示範班', key='checkin_demo_add', disabled=_demo_cg is None, width='stretch'):
+                _checkin_store.add_demo_shift(_demo_cg)
+                st.success(f'已替 {caregiver_label(_demo_cg)} 建立示範班，請用手機打開打卡網址輸入員工編號試打。')
+            if _d2.button('🧹 清除示範班', key='checkin_demo_clear', width='stretch'):
+                st.success(f'已清除 {_checkin_store.clear_demo()} 筆示範班與示範打卡。')
+
+        @st.fragment
+        def _checkin_board():
+            _overdue = getattr(config, 'attendance_overdue_mins', 15)
+            _board = _checkin_store.day_board(_checkin_today, overdue_mins=_overdue,
+                                              gps_radius_m=getattr(config, 'attendance_gps_radius_m', 300))
+            _b1, _b2 = st.columns([4, 1], vertical_alignment='bottom')
+            _b1.markdown(f'##### ② 今日打卡看板 · {_checkin_today:%Y/%m/%d}（更新於 {_checkin_store.now():%H:%M}）')
+            if _b2.button('🔄 重新整理', key='checkin_board_refresh', width='stretch'):
+                try:
+                    st.rerun(scope='fragment')
+                except TypeError:
+                    st.rerun()
+            if _board.empty:
+                st.info('今天還沒有發布班表。按上方「📲 發布今日班表」，居服員手機上就會看到今天的班。')
+                return
+            _count = _board['狀態'].value_counts()
+            kpi_cards([
+                dict(label='今日班數', value=f'{len(_board):,}', unit='筆', tone='good'),
+                dict(label='已上班／已完成', value=f"{int(_count.get('服務中', 0) + _count.get('已完成', 0)):,}", unit='筆',
+                     sub=f"已完成 {int(_count.get('已完成', 0)):,} 筆", tone='good'),
+                dict(label='逾時未打卡', value=f"{int(_count.get('逾時未打卡', 0)):,}", unit='筆',
+                     sub=f'過了開始時間 {_overdue:g} 分鐘', tone='bad' if _count.get('逾時未打卡') else 'good'),
+                dict(label='未遇', value=f"{int(_count.get('未遇', 0)):,}", unit='筆',
+                     tone='warn' if _count.get('未遇') else 'good'),
+            ])
+            _order = {'逾時未打卡': 0, '未遇': 1, '未開始': 2, '服務中': 3, '已完成': 4}
+            _board = _board.assign(_o=_board['狀態'].map(_order)).sort_values(['_o', '時段'], kind='stable').drop(columns='_o')
+            _board['狀態'] = _board['狀態'].map(lambda s: {'逾時未打卡': '🔴 逾時未打卡', '未遇': '🟠 未遇',
+                                                           '已完成': '✅ 已完成'}.get(s, s))
+            show_table(_board, hide_index=True, width='stretch',
+                       column_config={'提醒': st.column_config.TextColumn('提醒', width='large')})
+            st.caption(f'🔴 逾時未打卡＝過了開始時間 {_overdue:g} 分鐘還沒按「上班」，可以打電話確認。'
+                       '距案家是打卡時手機的位置（只有 https 網址才記錄）；GPS 可能有誤差或被偽造，只當提醒，不當懲處依據。')
+        _checkin_board()
+
+        st.markdown('##### ③ 打卡網址、手機綁定與補登覆核')
+        _checkin_view = big_tabs(['打卡網址', '手機綁定', '補登覆核'], 'cf_checkin_view', size='medium',
+                                 suffixes=['', f'{len(_pending_devices)} 支待核准' if _pending_devices else '',
+                                           f'{len(_pending_punches)} 筆' if _pending_punches else ''])
+
+        if _checkin_view == '打卡網址':
+            @st.fragment(run_every=2 if _checkin_runner.tunnel_state()['status'] == _checkin_runner.TUNNEL_STARTING else None)
+            def _checkin_url_area():
+                """打卡網址與 QR Code。外部網址產生中時每 2 秒自動更新，好了就整頁重畫。"""
+                _tstate = _checkin_runner.tunnel_state()
+                _url, _url_kind = _checkin_runner.checkin_url()
+                if _tstate['status'] != _checkin_runner.TUNNEL_STARTING and st.session_state.get('_checkin_tunnel_wait'):
+                    st.session_state.pop('_checkin_tunnel_wait')
+                    st.rerun()                    # 產生完成：整頁重畫，停止自動更新
+                if _tstate['status'] == _checkin_runner.TUNNEL_STARTING:
+                    st.session_state['_checkin_tunnel_wait'] = True
+                _q1, _q2 = st.columns([1, 2])
+                with _q1:
+                    _png = None
+                    if _url_kind != '外部網址產生中':     # 產生中先不給辦公室網址的 QR Code，避免居服員掃到之後就不能用的網址
+                        try:
+                            _png = _checkin_runner.qr_png(_url)
+                        except Exception as exc:          # QR Code 失敗不影響打卡，網址仍可直接傳
+                            st.warning('QR Code 暫時無法產生，請把右邊的網址直接傳給居服員。原因：' + str(exc))
+                    if _png:
+                        st.image(_png, width=240)
+                        download_button_quiet('⬇️ 下載 QR Code 圖片', _png, '打卡QRCode.png', 'image/png', key='download_checkin_qr')
+                with _q2:
+                    st.markdown('##### 把打卡網址給居服員（傳到 LINE 群組，或印出左邊的 QR Code）')
+                    if _url_kind == '外部網址產生中':
+                        st.info('正在產生外部網址（第一次要下載 cloudflared，約 10～40 秒），好了會自動顯示 QR Code。', icon='⏳')
+                    else:
+                        st.code(_url, language=None)
+                    if _url_kind == '固定網址':
+                        st.success('這是 https 固定網址：居服員用行動網路在任何地方都能打卡，手機會記錄位置。', icon='🌐')
+                    elif _url_kind == '外部網址':
+                        st.success('外部網址已開啟：居服員用行動網路在任何地方都能打卡，手機會記錄位置。', icon='🌐')
+                        st.caption('這台電腦要保持開機、連網、HomeCare AI 開著；HomeCare AI 重開後網址會變，記得重新傳 QR Code 給居服員。'
+                                   '正式上線建議請資訊人員設定固定網址（下方「進階」）。')
+                        st.button('停止外部網址', key='checkin_tunnel_stop', on_click=_checkin_tunnel, args=(False,))
+                    elif _url_kind == '辦公室網路':
+                        if _tstate['status'] == _checkin_runner.TUNNEL_FAILED:
+                            st.error('外部網址沒有開成功，上面暫時是辦公室網路的位址（只有同一個 Wi-Fi 打得開、不記錄位置）。原因：'
+                                     + _tstate['error'])
+                            _label = '🌐 再試一次產生外部網址'
+                        else:
+                            st.warning('目前是辦公室網路的位址：只有連同一個 Wi-Fi 的手機打得開，而且不是 https，打卡不會記錄位置。'
+                                       '按「🌐 產生外部網址」就能讓居服員在外面用行動網路打卡。')
+                            _label = '🌐 產生外部網址'
+                        st.button(_label, key='checkin_tunnel_start', type='primary', on_click=_checkin_tunnel, args=(True,),
+                                  help='用 Cloudflare 免費臨時通道產生 https 網址；第一次會下載 cloudflared（約 50MB），需要 10～40 秒。')
+                    st.caption(f'想先自己試：在這台電腦打開 http://localhost:{_checkin_runner.PORT} ，按 F12 再按 Ctrl+Shift+M 切成手機畫面。'
+                               '電腦瀏覽器第一次打卡會問「要允許位置嗎」，要按允許；Windows 還要在「設定 → 隱私權與安全性 → 位置」開啟定位服務。')
+
+            _checkin_url_area()
+            with st.expander('進階：設定固定打卡網址（資訊人員）'):
+                if 'checkin_public_url' not in st.session_state:
+                    st.session_state['checkin_public_url'] = _checkin_store.get_setting(_checkin_runner.URL_KEY)
+                st.text_input('固定網址', key='checkin_public_url', placeholder='例如 https://checkin.你的網域',
+                              help='正式上線用 Caddy 網域。設定後優先於外部網址；留空＝不用固定網址。')
+                if st.button('儲存網址', key='checkin_save_url'):
+                    _err = _checkin_runner.save_public_url(st.session_state.get('checkin_public_url', ''))
+                    if _err:
+                        st.error(_err)
+                    else:
+                        _checkin_audit('set_url', kind='fixed' if st.session_state.get('checkin_public_url') else 'cleared')
+                        st.rerun()
+        elif _checkin_view == '手機綁定':
+            if _pending_devices:
+                st.markdown(f'##### 🔔 等你核准 · {len(_pending_devices)} 支')
+                for _dv in _pending_devices[:30]:
+                    _c1, _c2, _c3 = st.columns([3, 1, 1], vertical_alignment='center')
+                    _c1.markdown(f"**{_md_plain(caregiver_label(_dv['caregiver_id']))}**　{_md_plain(_dv['label'])}　"
+                                 f"申請於 {_dv['created_at'][5:16]}")
+                    _c2.button('核准', key=f"checkin_approve_{_dv['id']}", type='primary', width='stretch',
+                               on_click=_checkin_device, args=(_dv['id'], 'approve'))
+                    _c3.button('拒絕', key=f"checkin_reject_{_dv['id']}", width='stretch',
+                               on_click=_checkin_device, args=(_dv['id'], 'reject'))
+                st.caption('核准新手機後，同一位居服員原本的手機會自動解除（一人一支手機）。不認得的申請請先打電話確認再核准。')
+            else:
+                st.success('目前沒有等待核准的手機。')
+            _active = _checkin_store.devices(_checkin_store.DEVICE_ACTIVE)
+            st.markdown(f'##### 已綁定的手機 · {len(_active)} 支')
+            if _active:
+                show_table(pd.DataFrame([{'居服員ID': d['caregiver_id'], '手機': d['label'], '綁定時間': (d['decided_at'] or '')[:16],
+                                          '最後使用': (d['last_seen'] or '')[:16]} for d in _active]), hide_index=True, width='stretch')
+                _r1, _r2 = st.columns([3, 1], vertical_alignment='bottom')
+                _pick = _r1.selectbox('解除綁定（手機遺失、離職、綁錯人）', [d['id'] for d in _active], key='checkin_revoke_pick',
+                                      format_func=lambda i: next(f"{caregiver_label(d['caregiver_id'])}　{d['label']}"
+                                                                 for d in _active if d['id'] == i))
+                _r2.button('解除綁定', key='checkin_revoke', width='stretch', on_click=_checkin_device, args=(_pick, 'revoke'))
+            else:
+                st.caption('還沒有居服員綁定手機。')
+            _auto = st.toggle('第一支手機自動綁定', value=_checkin_store.auto_bind_enabled(), key='checkin_auto_bind',
+                              help='開著：居服員第一次輸入員工編號就直接綁定。關掉：每支手機都要居督核准（較嚴格，防止別人先用他的編號綁定）。')
+            if _auto != _checkin_store.auto_bind_enabled():
+                _checkin_store.set_setting(_checkin_store.AUTO_BIND_KEY, '1' if _auto else '0')
+                _checkin_audit('auto_bind', enabled=bool(_auto))
+            st.caption('手機上只存一組隨機綁定碼，資料庫只存它的雜湊值；解除後那支手機下次開頁面就要重新輸入員工編號。')
+
+        else:
+            if not _pending_punches:
+                st.success('目前沒有待覆核的補登。')
+            else:
+                st.caption('居服員忘記打卡或打錯時間時，會在手機上「補登」並寫原因。核准後執行對照改用補登的時間；退回則不採用。原本的打卡紀錄都會保留。')
+                for _pp in _pending_punches[:50]:
+                    _c1, _c2, _c3 = st.columns([4, 1, 1], vertical_alignment='center')
+                    _c1.markdown(f"**{_pp['日期'][5:].replace('-', '/')} {_md_plain(caregiver_label(_pp['居服員ID']))}**　"
+                                 f"{_md_plain(client_label(_pp['案家ID']))}　補登{_pp['打卡類型']} **{_pp['補登時間']}**　"
+                                 f"原因：{_md_plain(_pp['原因'])}（{_pp['登錄時間']} 送出）")
+                    _c2.button('核准', key=f"checkin_ok_{_pp['紀錄ID']}", type='primary', width='stretch',
+                               on_click=_checkin_review, args=(_pp['紀錄ID'], True))
+                    _c3.button('退回', key=f"checkin_no_{_pp['紀錄ID']}", width='stretch',
+                               on_click=_checkin_review, args=(_pp['紀錄ID'], False))
+
+        # ---- 執行對照：排班 vs 實際打卡（attendance_reconcile） ----
+        subhead('執行對照（排班 vs 打卡）')
+
+        @st.fragment
+        def _attendance_view():
+            _all_days = pd.to_datetime(df_final['日期'], errors='coerce').dropna().dt.date
+            if _all_days.empty:
+                st.info('班表沒有日期，無法對照。')
+                return
+            _first, _last = _all_days.min(), _all_days.max()
+            # 只對照「已發布到打卡網頁」的日期：沒發布的日子居服員不可能打卡，不該算漏打卡。
+            _published = sorted(d for d in (pd.to_datetime([p[0] for p in _checkin_store.published_days()]).date)
+                                if _first <= d <= _last)
+            if not _published:
+                st.info('這次班表期間還沒有發布過任何一天到打卡網頁。發布並開始打卡後，這裡會比對排班和實際打卡。')
+                return
+            _range = st.date_input('對照期間', value=(_published[0], min(max(_checkin_today, _published[0]), _published[-1])),
+                                   min_value=_first, max_value=_last, key='cf_attendance_range', format='YYYY/MM/DD')
+            if not isinstance(_range, (tuple, list)) or len(_range) != 2:
+                st.caption('請選擇開始與結束日期。')
+                return
+            _start, _end = _range
+            _days_in = [d for d in _published if _start <= d <= _end]
+            try:
+                _punches = _checkin_store.punch_frame(_start, _end)
+                _sched = df_final[pd.to_datetime(df_final['日期'], errors='coerce').dt.date.isin(_days_in)]
+                _result = _att.reconcile(_sched, _punches, config)
+            except Exception as exc:
+                st.error('執行對照暫時無法計算，班表與打卡紀錄都不受影響。原因：' + str(exc))
+                return
+            if _punches.empty:
+                st.info('這段期間還沒有任何打卡紀錄。居服員開始用手機打卡後，這裡會列出遲到、漏打卡與未遇。')
+            _sum = _att.summary(_result)
+            kpi_cards([
+                dict(label='應對照', value=f"{_sum['應對照']:,}", unit='筆', sub=f"正常 {_sum['正常']:,} 筆", tone='good'),
+                dict(label='遲到', value=f"{_sum['遲到']:,}", unit='筆',
+                     sub='準時率 ' + (f"{_sum['準時率']:.1f}%" if _sum['準時率'] is not None else '—'),
+                     tone='warn' if _sum['遲到'] else 'good'),
+                dict(label='漏打卡', value=f"{_sum['漏打卡']:,}", unit='筆', sub='整筆沒打、漏上班或漏下班',
+                     tone='bad' if _sum['漏打卡'] else 'good'),
+                dict(label='未遇', value=f"{_sum['未遇']:,}", unit='筆', tone='bad' if _sum['未遇'] else 'good'),
+            ])
+            _extra = [f"{k} {_sum[k]:,} 筆" for k in ('早退', '補登待覆核', '排外打卡', '位置提醒') if _sum[k]]
+            if _extra or _sum['尚未結束']:
+                st.caption('　·　'.join(_extra + ([f"尚未結束 {_sum['尚未結束']:,} 筆（不判斷）"] if _sum['尚未結束'] else [])))
+            _only = st.checkbox('只看有問題的', value=True, key='cf_attendance_only_issues')
+            _visible = _result[~_result['狀態'].isin([_att.STATUS_OK, _att.STATUS_NOT_YET])] if _only else _result
+            if _visible.empty:
+                if _sum['應對照']:
+                    st.success('這段期間沒有遲到、漏打卡或未遇。')
+            else:
+                show_table(_visible, hide_index=True, width='stretch',
+                           column_config={'建議處理': st.column_config.TextColumn('建議處理', width='large'),
+                                          '異常項目': st.column_config.TextColumn('異常項目', width='medium')})
+            _per = _att.by_caregiver(_result)
+            if not _per.empty:
+                with st.expander(f'每位居服員 · {len(_per)} 位'):
+                    show_table(_per, hide_index=True, width='stretch')
+            download_button_quiet('⬇️ 下載執行對照 CSV', export_frame(_result).to_csv(index=False).encode('utf-8-sig'),
+                                  f'執行對照_{_start:%Y%m%d}_{_end:%Y%m%d}.csv', 'text/csv', key='download_attendance')
+            st.caption(f'只對照已發布到打卡網頁的日期（這段期間 {len(_days_in)} 天）。以任務ID 對應排班與打卡；補登核准前先暫時採用，退回的不採用。「位置提醒」只代表打卡位置離案家較遠，'
+                       'GPS 可能有誤差或被偽造，只當提醒，不算異常、不當懲處依據。')
+
+        st.caption('逐筆比對排班和實際打卡，列出遲到、漏打卡、未遇，可下載 CSV；今天的即時狀況看上方「② 今日打卡看板」就夠了。')
+        with st.expander('展開執行對照明細（遲到、漏打卡、未遇）'):
+            _attendance_view()
 
         subhead('人工覆寫紀錄')
         _session_overrides = [{'任務ID': k, '目前居服員': caregiver_label(v.get('cg_id')) if v.get('cg_id') else '待安排', '原因': v.get('reason', '')}

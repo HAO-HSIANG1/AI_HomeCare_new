@@ -1,4 +1,6 @@
 # 啟動：docker compose up -d --build     （未在實機測試過，第一次請先在辦公室電腦試跑）
+# 三個服務：careflow（居督用的 HomeCare AI，8501）、checkin（居服員手機打卡網頁，8600）、caddy（對外 443，自動 HTTPS）。
+# careflow 與 checkin 用同一個映像、同一個資料 volume（打卡資料在 /app/output_results/checkin.sqlite3）。
 services:
   careflow:
     build: .
@@ -6,18 +8,36 @@ services:
     environment:
       CAREFLOW_OSRM_MOTORCYCLE_HOST: "http://host.docker.internal:5001"   # 改成你現在使用的 OSRM 網址
       # GOOGLE_MAPS_API_KEY: "..."                          # 大眾運輸用；建議放 .env，不要寫進檔案
+      CAREFLOW_CHECKIN_AUTOSTART: "0"                       # 打卡網頁由下面的 checkin 服務常駐，這裡不另外啟動
+      CAREFLOW_CHECKIN_PUBLIC_URL: "https://checkin.example.org"   # 改成 Caddyfile 裡的打卡網域；04 頁的 QR Code 用這個網址
+      TZ: "Asia/Taipei"
     volumes:
       - careflow_data:/app/output_results
     extra_hosts: ["host.docker.internal:host-gateway"]
     expose: ["8501"]
-  caddy:                      # 對外只開 443：自動 HTTPS＋帳密。若只走 Tailscale/VPN 可刪除這段並改成 ports: ["8501:8501"]
+  checkin:                    # 居服員打卡網頁：不必等居督打開 HomeCare AI，容器啟動就能打卡
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "checkin.server", "--host", "0.0.0.0", "--port", "8600"]
+    environment:
+      CAREFLOW_CHECKIN_SECURE: "1"                          # 綁定 cookie 只走 https
+      TZ: "Asia/Taipei"
+    volumes:
+      - careflow_data:/app/output_results
+    expose: ["8600"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8600/healthz', timeout=3)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+  caddy:                      # 對外只開 443：自動 HTTPS。若只走 Tailscale/VPN 可刪除這段並改成 ports: ["8501:8501", "8600:8600"]
     image: caddy:2
     restart: unless-stopped
     ports: ["443:443", "80:80"]
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
-    depends_on: [careflow]
+    depends_on: [careflow, checkin]
 volumes:
   careflow_data:
   caddy_data:

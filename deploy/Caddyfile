@@ -1,7 +1,20 @@
-# 把 careflow.example.org 換成你的網域；密碼雜湊用：docker run --rm caddy:2 caddy hash-password
+# 把 careflow.example.org、checkin.example.org 換成你的網域（兩筆 DNS 都指到這台主機）；
+# 密碼雜湊用：docker run --rm caddy:2 caddy hash-password
+
+# 居督用的 HomeCare AI：外層共用帳密（basic auth）＋系統內個人帳號
 careflow.example.org {
     basicauth {
         supervisor  PASTE_HASH_HERE
     }
     reverse_proxy careflow:8501
+}
+
+# 居服員手機打卡：不加 basic auth（居服員用員工編號＋手機綁定）。
+# 一定要走 https，手機才會給 GPS；Caddy 會自動帶 X-Forwarded-Proto，打卡網頁靠它判斷要不要記位置。
+checkin.example.org {
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        -Server
+    }
+    reverse_proxy checkin:8600
 }

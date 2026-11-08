@@ -273,6 +273,11 @@ class PipelineConfig:
     # 跨月回溯種子：{居服員ID:{日期字串,...}}，由呼叫端（app.py）從 WorkflowStore 讀取並指派，
     # 供 find_insertion_candidates／人工改派提醒使用；AI 批次排班用 worker_workdays 本身即可。
     worker_workday_seed: dict = field(default_factory=dict, repr=False)
+    # 執行對照與打卡看板（attendance_reconcile、checkin.store.day_board）的容許值。
+    attendance_late_grace_mins: float = 10.0          # 上班打卡晚於排定開始超過此分鐘 → 遲到
+    attendance_early_leave_grace_mins: float = 10.0   # 下班打卡早於排定結束超過此分鐘 → 早退
+    attendance_overdue_mins: float = 15.0             # 今天的班過了開始時間此分鐘還沒上班打卡 → 看板標「逾時未打卡」
+    attendance_gps_radius_m: float = 300.0            # 打卡位置離案家超過此公尺 → 只提醒（GPS 可能有誤差），不算異常
 
 # ==========================================
 # 資料載入
@@ -4532,7 +4537,7 @@ def identity_display(frame, caregivers=None, clients=None):
     if not isinstance(frame,pd.DataFrame):return frame
     caregivers,clients = caregivers or {},clients or {}
     out=frame.copy()
-    caregiver_cols={'居服員ID','居服員','編號','派單居服員','原派居服員','新派居服員','最終派單居服員','AI建議居服員','歷史首選居服員ID','請假居服員'}
+    caregiver_cols={'居服員ID','居服員','編號','派單居服員','原派居服員','新派居服員','最終派單居服員','AI建議居服員','歷史首選居服員ID','請假居服員','排定居服員','打卡居服員'}
     client_cols={'案家ID','案號','內部案號','起點案號'}
     for col in out.columns:
         mapping = caregivers if col in caregiver_cols else (clients if col in client_cols else None)

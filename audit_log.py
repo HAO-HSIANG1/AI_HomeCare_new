@@ -23,6 +23,7 @@ EVENTS = {
     'login_failed': '登入失敗',
     'logout': '登出',
     'account': '帳號異動',
+    'checkin': '打卡管理',     # 發布班表、核准／拒絕／解除手機綁定、補登覆核、打卡網址與自動綁定設定（只記 ID）
 }
 
 # 欄位名稱含這些字就不寫進紀錄（只記 ID）。帳號代碼請用 target、account 等欄名，不要用 username。

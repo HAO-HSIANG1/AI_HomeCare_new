@@ -11,7 +11,7 @@
 | 01 資料匯入與排班設定 | Excel 拖曳匯入、排班期間、交通方式、排班規則、服務碼檢查與資料表編輯 |
 | 02 智慧排班作業 | 一鍵 AI 全域最佳化排班、週班表（大字）、拖曳調整、人工改派 |
 | 03 衝突與異常處理 | 班次重疊、轉場不足、資格不符等分類；未派案家 AI 替代方案（挪時間、換人、拆兩段）；臨時新增／請假／改期／延遲；LINE 派案訊息解析與定位 |
-| 04 排班結果與覆核 | 排班完成率、已排與未排班次、警示案件、最終班表匯出、人工覆寫紀錄 |
+| 04 排班結果與覆核 | 排班完成率、已排與未排班次、警示案件、最終班表匯出、居服員打卡（QR Code、發布今日班表、手機綁定、補登覆核、當日看板）、執行對照、人工覆寫紀錄 |
 | 05 人力與效益分析 | 排班效益、需求熱圖與增聘／調派建議、工時與負荷、轉場時間、營收與薪資估算 |
 
 介面採高對比大字設計，頁首可切換「標準／大／特大」字體。
@@ -36,6 +36,77 @@
 | `CAREFLOW_AUTH` | 設成 `0`（或 `off`／`false`／`no`）關閉登入，以主管權限使用。**只限本機開發**，正式環境不要設 |
 | `CAREFLOW_ACCOUNTS_DB` | 帳號資料庫路徑（預設 `output_results/accounts.sqlite3`） |
 | `CAREFLOW_AUDIT_DIR` | 稽核紀錄資料夾（預設 `output_results/audit`） |
+
+## 居服員打卡（QR Code）
+
+居服員不用裝 App、不用密碼：用手機掃 QR Code → 第一次輸入員工編號（這支手機就綁定給他）→ 之後打開就看到今天的服務個案，按「上班」「下班」「未遇」。
+
+打卡網頁（`checkin/`，port 8600）跟著 HomeCare AI 一起在背景啟動，不用另外開程式；設 `CAREFLOW_CHECKIN_AUTOSTART=0` 可以關掉（例如打卡網頁另外架在別台主機，或用 docker-compose 的 `checkin` 服務）。
+注意：Streamlit 要有人打開 HomeCare AI 網頁，程式才會開始執行，所以本機使用時請先開啟 HomeCare AI 一次；Docker 部署用獨立的 `checkin` 服務，不受影響。
+
+### 居督每天怎麼做（都在「④ 確認班表」頁的「📱 居服員打卡」）
+
+1. **① 發布班表**：排好班後按「📲 發布今日班表」；有改派、代班再按一次。也可以先發布明天的班。「試用：建立一筆示範班」也在這裡。
+2. **② 今日打卡看板**：每一班的上班／下班時間。過了開始時間 15 分鐘還沒打卡標 🔴「逾時未打卡」（分鐘數是 `PipelineConfig.attendance_overdue_mins`）。
+3. **③ 下方同一排的三個分頁**：
+   - **打卡網址**：第一次把 QR Code 圖片傳到 LINE 群組或印出來。
+   - **手機綁定**：第一支手機自動綁定。換手機時會出現「🔔 新手機等你核准」，按「核准」後舊手機自動解除。手機遺失、離職、綁錯人時按「解除綁定」。要更嚴格可以關掉「第一支手機自動綁定」，每支手機都由居督核准。
+   - **補登覆核**：居服員忘記打卡或打錯時間，會在手機「補登」並寫原因；在這裡核准或退回。
+4. **執行對照**（打卡區下方，預設收合，按「展開執行對照明細」）：比對排班和實際打卡，列出遲到、漏打卡（整筆沒打／漏上班／漏下班）、未遇，以及早退、補登待覆核、排外打卡；可下載 CSV。只對照已發布到打卡網頁的日期。
+
+### 規則
+
+- **打卡時間一律用主機時間**（台北時區），不用手機時間。
+- **打卡紀錄只能新增、不能修改或刪除**（資料庫觸發器擋 UPDATE／DELETE）。要更正就在手機「補登」，狀態是「待覆核」；原本的紀錄保留，居督核准後對照改用補登的時間，退回則不採用。重複按同一個按鈕會被擋下。
+- **只有 https 才記錄 GPS**：手機瀏覽器在 http 下本來就不給定位，打卡網頁伺服器也會再檢查一次；補登一律不記位置。
+- **GPS 距離只提醒**：打卡位置離案家超過 300 公尺（`attendance_gps_radius_m`）只在看板與對照表標「位置提醒」，不算異常、不當懲處依據。
+- **個資**：打卡資料只用原本的居服員ID、案家ID、任務ID；手機上的案家名稱是遮罩後的「王○○」，資料庫不存任何未遮罩的姓名。手機只存一組隨機綁定碼，資料庫只存它的雜湊值。
+- 打卡資料存在 `output_results/checkin.sqlite3`（已列入 `.gitignore`）；居督的發布、核准、解除、覆核動作寫進存取稽核紀錄（事件「打卡管理」）。
+
+### 三種用法
+
+| | 辦公室試用 | Cloudflare Tunnel 試用 | 正式上線（Docker＋Caddy） |
+|---|---|---|---|
+| 打卡網址 | `http://這台電腦IP:8600`（`CAREFLOW_CHECKIN_TUNNEL=0` 或外部網址開不成時） | `https://….trycloudflare.com`（**預設**，每次重開會變） | `https://checkin.你的網域` |
+| 誰打得開 | 連同一個 Wi-Fi 的手機 | 任何有網路的手機 | 任何有網路的手機 |
+| 記錄 GPS | 不會（不是 https） | 會 | 會 |
+| 主機 | 這台電腦要開著 | 這台電腦要開著且連網 | 雲端或機構主機 |
+
+#### 用 Cloudflare Tunnel 試用（不用網域、不用設防火牆）
+
+**預設就是外部網址。** 沒有設定固定網址時，HomeCare AI 一啟動就在背景用 cloudflared 開一條臨時通道，④ 頁的 QR Code 直接是 `https://….trycloudflare.com`（產生中會顯示「⏳ 正在產生外部網址」，好了自動換成 QR Code）。
+第一次會從 Cloudflare 官方 GitHub 下載 cloudflared（約 50MB）到 `output_results/bin/`（電腦已安裝 cloudflared 就直接用），需要 10～40 秒；GitHub 下載伺服器偶爾會回 504（逾時），系統會自動重試 3 次，還是失敗就顯示原因和「🌐 再試一次產生外部網址」按鈕。
+用完按「停止外部網址」（之後不會自動再開）。HomeCare AI 重開後網址會變，要重新傳 QR Code。不想自動開外部網址時，設 `CAREFLOW_CHECKIN_TUNNEL=0`。
+
+下載一直失敗時，可以自己把 cloudflared 放進來：用瀏覽器下載 `cloudflared-windows-amd64.exe`，改名成 `cloudflared.exe` 放到專案的 `output_results\bin\`；或執行 `winget install --id Cloudflare.cloudflared`。之後按「再試一次」就會直接使用，不再下載。
+
+電腦連不到 GitHub、或想自己控制時，也可以手動開：
+
+1. 安裝 cloudflared：Windows 在命令提示字元執行 `winget install --id Cloudflare.cloudflared`（或到 [Cloudflare Tunnel 說明頁](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)）；macOS 用 `brew install cloudflared`。
+2. 先開啟 HomeCare AI（`streamlit run app.py`），打卡網頁會跟著在 8600 啟動。
+3. 另開一個命令視窗執行：
+   ```bash
+   cloudflared tunnel --url http://localhost:8600
+   ```
+   畫面會出現一行 `https://隨機字.trycloudflare.com`，視窗不要關。
+4. 到 ④ 頁「📱 居服員打卡 › 網址與發布 › 進階：設定固定打卡網址」貼上這個網址並儲存，QR Code 會換成新網址。
+5. 試用結束：關掉 cloudflared 視窗，回到 04 頁把固定網址清空。
+
+注意：免帳號的臨時通道只適合試辦——網址每次重開都會變（要重新發 QR Code）、沒有服務保證，而且任何拿到網址的人都能打開登入頁（仍要輸入已發布班表裡的員工編號）。試用期間建議關掉「第一支手機自動綁定」，每支手機由居督核准。
+
+### 打卡相關環境變數
+
+| 變數 | 說明 |
+|---|---|
+| `CAREFLOW_CHECKIN_AUTOSTART` | `0` 不跟著 HomeCare AI 啟動打卡網頁 |
+| `CAREFLOW_CHECKIN_PUBLIC_URL` | 固定打卡網址（04 頁「進階」設定的優先） |
+| `CAREFLOW_CHECKIN_TUNNEL` | `0`：沒有固定網址時不要自動開外部網址（Cloudflare 臨時通道），改用辦公室網路位址 |
+| `CAREFLOW_CHECKIN_PORT` | 打卡網頁埠號，預設 `8600` |
+| `CAREFLOW_CHECKIN_DB` | 打卡資料庫路徑，預設 `output_results/checkin.sqlite3` |
+| `CAREFLOW_CHECKIN_SECURE` | `1`：綁定 cookie 只走 https（正式上線請開） |
+| `CAREFLOW_CHECKIN_SECRET` | 打卡網頁的 session 金鑰；不設時第一次啟動自動產生並存在打卡資料庫 |
+
+QR Code 用 segno 產生；主機沒有安裝 segno 時，自動改用隨程式附上的 `checkin/_vendor/segno`（BSD-3 授權），不必另外安裝。
 
 ## 快速開始
 
@@ -91,6 +162,8 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml
 | `dashboard_metrics.py`、`dashboard_view.py` | 人力與效益儀錶板 |
 | `osrm_client.py`、`traffic_wake.py` | 交通路網連線與喚醒 |
 | `auth.py`、`audit_log.py` | 登入與角色權限、存取稽核紀錄（hash chain） |
+| `checkin/` | 居服員手機打卡網頁：`store.py` 資料庫（班表發布、手機綁定、打卡、補登覆核、看板）、`server.py` Flask 網頁、`runner.py` 自動啟動與網址／QR Code、`templates/` 手機畫面 |
+| `attendance_reconcile.py` | 執行對照：排班 vs 打卡（遲到、漏打卡、未遇…） |
 | `tests/` | 單元與流程測試 |
 
 ## 測試
@@ -100,12 +173,24 @@ pip install -r requirements-dev.txt
 python -m pytest tests
 ```
 
-測試會自動關閉登入（`tests/conftest.py` 設 `CAREFLOW_AUTH=0`），帳號與稽核紀錄寫到暫存資料夾；登入流程另由 `tests/test_auth.py` 開啟登入後測試。
+測試會自動關閉登入（`tests/conftest.py` 設 `CAREFLOW_AUTH=0`），帳號、稽核紀錄與打卡資料庫寫到暫存資料夾，也不會在 8600 埠開打卡網頁；登入流程另由 `tests/test_auth.py` 開啟登入後測試。打卡相關測試在 `tests/test_checkin.py`、`tests/test_attendance_reconcile.py`、`tests/test_checkin_panel_ui.py`。
 
 ## 部署
 
-- `Dockerfile`、`docker-compose.yml`：機構內部主機部署（含 Caddy HTTPS 與帳密，見 `deploy/Caddyfile`）。
+- `Dockerfile`、`docker-compose.yml`：機構內部或雲端主機部署，三個服務：`careflow`（HomeCare AI，8501）、`checkin`（居服員打卡網頁，8600）、`caddy`（對外 443，自動 HTTPS）。
 - `osrm_motorcycle/`：建立機車路網 OSRM 主機的腳本。
+
+### Docker 部署步驟（含打卡網域）
+
+1. 準備一台一直開著、可以對外連線的主機（雲端或機構內），安裝 Docker 與 Docker Compose。
+2. 在 DNS 加兩筆 A 紀錄指到這台主機：`careflow.你的網域`（居督用）、`checkin.你的網域`（居服員打卡用）。防火牆開 80、443。
+3. 修改 `deploy/Caddyfile`：把兩個 `example.org` 網域換成你的；產生居督共用密碼的雜湊 `docker run --rm caddy:2 caddy hash-password`，貼到 `PASTE_HASH_HERE`。
+4. 修改 `docker-compose.yml`：`CAREFLOW_CHECKIN_PUBLIC_URL` 改成 `https://checkin.你的網域`；`CAREFLOW_OSRM_MOTORCYCLE_HOST` 改成你的 OSRM 主機。Google 金鑰放 `.env`。
+5. 啟動：`docker compose up -d --build`。Caddy 會自動申請 https 憑證（第一次約 1 分鐘）。
+6. 檢查：瀏覽器開 `https://checkin.你的網域/healthz` 應顯示 `ok`；開 `https://careflow.你的網域` 登入後到 ④ 頁，QR Code 應該是 `https://checkin.你的網域`。
+7. 備份：資料都在 `careflow_data` volume（排班存檔、帳號、稽核、`checkin.sqlite3`），請定期備份。
+
+打卡網頁不加 Caddy basic auth：居服員用員工編號＋手機綁定，只能看到自己今天的班。
 
 ### 兩層登入：Caddy 帳密＋系統帳號
 

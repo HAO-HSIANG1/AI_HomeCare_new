@@ -15,6 +15,7 @@ The project is a git repository (branch `develop`) with a pytest suite under `te
 - `app.py` — Streamlit app (see "Streamlit app" below). Only UI flow and orchestration; algorithms live in the modules.
 - `careflow_ui.py` — the only place for CSS and shared UI components (see 「程式與介面風格規範」).
 - `auth.py`, `audit_log.py` — login/roles and the append-only audit log (pure modules, no Streamlit).
+- `checkin/` — caregiver QR check-in web page (Flask, port 8600): `store.py` (SQLite `output_results/checkin.sqlite3`: published shifts, phone binding by token hash, append-only punches, late-entry reviews, day board; pure), `server.py` (phone pages; server time only; GPS kept only over https), `runner.py` (autostart with the app, check-in URL incl. the Cloudflare quick-tunnel 「外部網址」, QR PNG via installed segno or the bundled `checkin/_vendor/segno`), `templates/`. `attendance_reconcile.py` — pure schedule-vs-punch comparison (late, missing punch, missed visit…) for the ④ 執行對照 view.
 - `week_board.py`, `calendar_view.py`, `dashboard_view.py` — page-level view components; `dashboard_metrics.py`, `manager_report.py` — pure calculations for the dashboard and the one-page manager report.
 - `pending_clients.py`, `pending_advice.py`, `issue_center.py`, `substitute_rank.py`, `temp_case.py`, `eligibility.py` — unassigned-case diagnosis, alternatives, issue grouping, substitutes, ad-hoc cases, eligibility explanations.
 - `dispatch_workflow.py` (leave / fixed caregiver / workday ledger, SQLite), `session_store.py` (autosave), `persistent_cache.py` (travel-leg disk cache), `runtime_views.py` (versioned view caches).
@@ -28,6 +29,7 @@ The project is a git repository (branch `develop`) with a pytest suite under `te
 
 - **Login first.** Unless `CAREFLOW_AUTH=0`, nothing but the header and the login card (`careflow_ui.auth_card`) is drawn until `st.session_state['auth_user']` is set; with no accounts yet, the card creates the first 主管. The user is re-read from `auth.current_user()` on every rerun, so disabling an account logs it out. Roles: 主管 = everything incl. the manager report and 帳號管理; 居督 = steps ①～④.
 - **Navigation.** The top stepper (`render_stepper`) is the only way to change pages: ① 匯入資料 → ② 開始排班 → ③ 處理問題 → ④ 確認班表, plus 📊 主管報表 on the right. Locks (missing data, missing schedule, role) are computed only in `_flow_locks()`. 👥 帳號管理 (`M_ACCOUNTS`) is opened from the sidebar by managers, renders and then `st.stop()`s before any data loading.
+- **Check-in.** `app.py` starts the check-in server once per process (`_start_checkin_server`, `st.cache_resource`) before the login gate; `CAREFLOW_CHECKIN_AUTOSTART=0` disables it (docker-compose runs it as the separate `checkin` service). ④ has 「📱 居服員打卡」 (in order: ① 發布班表 with the demo-shift expander, ② 今日打卡看板 fragment, ③ `big_tabs` key `cf_checkin_view`: 打卡網址／手機綁定／補登覆核) and 「執行對照（排班 vs 打卡）」 (details in a collapsed expander) between 「更新機構 Excel」 and 「人工覆寫紀錄」. Supervisor actions write audit event `checkin`.
 - **Sidebar** holds status only: account (logout, change own password), data/routing status, ⚙️ 排班規則設定, 🎬 示範模式, 🔒 個資顯示設定.
 - Scheduling runs only when the run button is clicked (`_request_run` → `_run_requested`); results are kept in `st.session_state['last_result']` and autosaved by `session_store`. Editing data or rules clears the old schedule and marks `_result_stale`.
 
@@ -166,11 +168,16 @@ All dispatch-policy coefficients named above live in the `PipelineConfig` datacl
   - 動作一律用 `on_click=` 回呼（例：`app.py › _request_run`、`_finalize_schedule`），不在按鈕回傳值後面直接改導覽狀態。
   - AI 專屬按鈕放在 key 以 `cfai` 開頭的容器裡（CSS 會套靛藍色）。
   - 下載一律用 `app.py › download_button_quiet()`（`on_click='ignore'`，不重跑整頁）。
+- **表單（`st.form`）**：只用在「一次送出多個欄位、而且含密碼」的情境，也就是登入（`careflow_ui.py › auth_card`）和帳號表單（`app.py › _render_accounts_page`、側邊欄「🔑 變更我的密碼」）。
+  - 其他設定類元件照舊即時生效，不包表單。
+  - 有密碼欄的表單用 `clear_on_submit=True`，送出後不把密碼留在畫面上（登入卡片例外：送出失敗時保留帳號方便重打）。
+  - 送出鍵用 `st.form_submit_button(..., width='stretch')`，一張表單只有一顆。
+  - 成功訊息如果要在 `st.rerun()` 之後才顯示，先存 `st.session_state['_account_notice']`，下次畫面再取出顯示（`app.py › _account_notice`）。
 - **表格**：
   - 唯讀表格一律用 `app.py › show_table(data, hide_index=True, width='stretch', column_config=...)`，不直接呼叫 `st.dataframe`（它會依個資設定套用 `identity_display`）；`app.py` 有 57 處 `show_table`，直接用 `st.dataframe` 只有 1 處。
   - 可編輯表格用 `st.data_editor`（`app.py › render_editable_sheet()`）。
   - 長文字欄位用 `st.column_config.TextColumn(width='large')`。
-- **HTML 元件的 CSS 一律放在 `careflow_ui.py`**。例：`week_board.py` 只輸出 `cf-wk-*` class，樣式在 `careflow_ui.py`。`calendar_view.py › _GRID_CSS` 是舊有例外，不要再增加新的例外。
+- **HTML 元件的 CSS 一律放在 `careflow_ui.py`**。例：`week_board.py` 只輸出 `cf-wk-*` class，樣式在 `careflow_ui.py`。`calendar_view.py › _GRID_CSS` 是舊有例外，不要再增加新的例外。居服員手機打卡頁（`checkin/templates/base.html`）是另一個 Flask 網頁、讀不到 `careflow_ui.py`，CSS 寫在模板裡，但變數名稱與色碼照抄 `WARM_CSS` 的 `--cf-*`，字級同樣用 `calc(px * var(--cf-s))`。
 
 #### 4. 用語
 
@@ -218,6 +225,9 @@ All dispatch-policy coefficients named above live in the `PipelineConfig` datacl
   - 計算模組不 import streamlit，並在模組 docstring 寫明，例如 `manager_report.py`「純函式，不呼叫 Streamlit」、`careflow_ui.py`「Presentation-only helpers. No scheduling or external requests.」。
   - 計算結果以 dict／DataFrame 回傳，例如 `manager_report.py › headline_cards()` 回傳 `dict(title, number, before, after, note, ai)`，交給 `impact_cards()` 顯示。
 - **常數**：大寫 snake_case 放在模組頂端，例如 `session_store.py › DB_PATH`、`KEEP_PER_SCOPE`、`STATE_KEYS`；`careflow_ui.py › RUN_STEPS`、`CHANGE_REASONS`。
+- **換行符號**：Windows 工作目錄裡的檔案是 CRLF，git 存成 LF（autocrlf）。
+  - 新檔案和修改後的檔案都維持 CRLF。
+  - 在 Linux 環境（例如 Claude 的工作區）用 git 看差異時，要加 `--ignore-cr-at-eol`，否則會顯示整個檔案都改了。
 - **版本標記**：要列入一致性檢查的模組頂端都有 `CAREFLOW_BUILD = '2026.10.18-v19'`，名單在 `build_info.py › REQUIRED_MODULES`，由 `app.py › _check_install()` 在啟動時比對。新增核心模組時兩邊要一起加。
 - **type hints**：只用在 `caregiver_engine.py`（`PipelineConfig` 的 dataclass 欄位、部分公開函式，例如 `load_override_log(log_path: str = OVERRIDE_LOG_PATH) -> pd.DataFrame`）。畫面與其他模組（`careflow_ui.py`、`dispatch_workflow.py`、`manager_report.py`…）都不寫，新程式依所在檔案的慣例。
 - **docstring**：
@@ -232,6 +242,7 @@ All dispatch-policy coefficients named above live in the `PipelineConfig` datacl
 - **機密**：`.streamlit/secrets.toml`（不進 git，範本是 `.streamlit/secrets.toml.example`）。讀取順序是**環境變數優先，再讀 `st.secrets`**，例如 `caregiver_engine.py` 讀 `GOOGLE_MAPS_API_KEY`、`app.py` 讀 `CAREFLOW_OSRM_MOTORCYCLE_HOST`，都包在 `try/except`。
 - **環境變數命名**：專案自己的設定一律 `CAREFLOW_` 前綴＋大寫底線，例如 `CAREFLOW_CACHE_DIR`、`CAREFLOW_AGENCY_DIR`、`CAREFLOW_ROAD_CACHE_DAYS`、`CAREFLOW_TRANSIT_CACHE_DAYS`、`CAREFLOW_OSRM_MAP_VERSION`、`CAREFLOW_TRAVEL_PROVIDER`；第三方金鑰沿用官方名稱（`GOOGLE_MAPS_API_KEY`）。
   - 登入相關：`CAREFLOW_AUTH`（`0`／`off`／`false`／`no` 關閉）、`CAREFLOW_ACCOUNTS_DB`、`CAREFLOW_AUDIT_DIR`（`auth.py › enabled()`／`db_path()`、`audit_log.py › audit_dir()`）。
+  - 打卡相關：`CAREFLOW_CHECKIN_AUTOSTART`、`CAREFLOW_CHECKIN_PUBLIC_URL`、`CAREFLOW_CHECKIN_TUNNEL`（沒有固定網址時預設自動開外部網址，`0` 關閉）、`CAREFLOW_CHECKIN_PORT`、`CAREFLOW_CHECKIN_DB`、`CAREFLOW_CHECKIN_SECURE`、`CAREFLOW_CHECKIN_SECRET`（`checkin/runner.py`、`checkin/store.py`、`checkin/server.py`）。打卡容許值（遲到、早退、逾時、GPS 半徑）是派單政策參數，放在 `PipelineConfig.attendance_*`。
   - 每個讀取點都要有預設值：`os.getenv('CAREFLOW_ROAD_CACHE_DAYS','30')`。
   - 路徑類變數讓測試可以導到暫存資料夾（`tests/conftest.py` 設定 `CAREFLOW_CACHE_DIR`）。
 - **管線常數**（主機、逾時）是模組常數，不放進 `PipelineConfig`，例如 `OSRM_TIMEOUT_SECONDS`、`OSRM_TABLE_MAX_COORDS`、`GOOGLE_ROUTES_TIMEOUT_SECONDS`。
@@ -262,7 +273,7 @@ All dispatch-policy coefficients named above live in the `PipelineConfig` datacl
   - 帳號一律由呼叫端傳入（`account=_user['username']`），模組本身不讀畫面狀態。
   - 事件代碼先加進 `audit_log.EVENTS`。detail 只放 ID 與筆數，欄名含 name、姓名、地址的會被濾掉，所以帳號代碼請用 `target`，不要用 `username`。
   - 寫入失敗只回傳 False，不影響登入與排班。
-  - 目前記錄的事件：login、login_failed、logout、account（create_first_manager／create／reset_password／disable／enable／change_own_password）。
+  - 目前記錄的事件：login、login_failed、logout、account（create_first_manager／create／reset_password／disable／enable／change_own_password）、checkin（publish／device_approve／device_reject／device_revoke／review／set_url／auto_bind／tunnel）。
 - **log**：沒有 logging 框架。只有引擎在外部服務退回估算時 `print('[OSRM Warning] …')`（`caregiver_engine.py`）。需要留存的操作紀錄寫成資料：居督覆寫寫進 `output_results/supervisor_override_log.csv`（`caregiver_engine.py › save_override_log`／`load_override_log`）、請假歷程寫進 `WorkflowStore` 的 `history` 表。
 
 #### 4. 個資遮罩（姓名 → 王○○）
@@ -292,7 +303,7 @@ All dispatch-policy coefficients named above live in the `PipelineConfig` datacl
   - 範例：`tests/test_manager_report.py › test_analytics_page_renders`。
   - 不可以在專案資料夾直接跑 AppTest，會寫進正式的 `output_results/`（見 `UI_改版進度.md` 注意事項）。
 - 資料庫測試傳入 tmp_path 路徑，或 monkeypatch 模組常數，例如 `tests/test_demo_mode.py` 的 `WorkflowStore('中化', tmp_path / 'real.sqlite3')`、`monkeypatch.setattr(wf, 'DEMO_STORE_DIR', ...)`。
-- `tests/conftest.py` 的 autouse fixture 負責把全域的路徑類環境變數導到暫存資料夾（`CAREFLOW_CACHE_DIR`、`CAREFLOW_ACCOUNTS_DB`、`CAREFLOW_AUDIT_DIR`），並設 `CAREFLOW_AUTH=0` 讓既有流程測試不必登入；新增會寫檔的模組時，在這裡加上對應的環境變數。
+- `tests/conftest.py` 的 autouse fixture 負責把全域的路徑類環境變數導到暫存資料夾（`CAREFLOW_CACHE_DIR`、`CAREFLOW_ACCOUNTS_DB`、`CAREFLOW_AUDIT_DIR`、`CAREFLOW_CHECKIN_DB`），設 `CAREFLOW_CHECKIN_AUTOSTART=0` 讓測試不在 8600 埠開打卡網頁，並設 `CAREFLOW_AUTH=0` 讓既有流程測試不必登入；新增會寫檔的模組時，在這裡加上對應的環境變數。
   - 要測登入頁的 AppTest 自己 `monkeypatch.setenv('CAREFLOW_AUTH', '1')`，並把 `auth.PBKDF2_ROUNDS` 調低加快（`tests/test_auth.py › _app`）。
   - 需要 streamlit 的測試用 `pytest.importorskip('streamlit.testing.v1')`，沒裝時略過，不會整檔載入失敗。
 
