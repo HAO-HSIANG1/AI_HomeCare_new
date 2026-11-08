@@ -407,6 +407,7 @@ MODULES = [
     ('issues', '03', '衝突與異常處理（含 LINE 解析）', '集中處理班次重疊、轉場不足、未成功派班、條件不符、臨時異動與替代方案。', '居督'),
     ('review', '04', '排班結果與覆核', '排班完成率、已排與未排班次、警示案件、人工覆寫紀錄、最終班表及匯出。', '居督'),
     ('analytics', '05', '人力與效益分析', '排班效益、需求熱圖與 AI 增聘／調派建議；居服員工時、負荷分布、轉場時間、人力配置、服務產出與營運效益。', '主管'),
+    ('accounts', '👥', '帳號管理', '新增帳號、重設密碼、停用帳號，並查看登入與帳號異動的存取稽核紀錄；只有主管可以進入。', '主管'),
 ]
 MODULE_KEYS = [m[0] for m in MODULES]
 _MODULE_INFO = {m[0]: m for m in MODULES}
@@ -426,6 +427,7 @@ MODULE_COLORS = {   # 方案 C「暖心大字」：全站統一深藍綠主色
     'issues': ('#1F5F7A', '#E3EEF3', '#143F52'),
     'review': ('#1F5F7A', '#E3EEF3', '#143F52'),
     'analytics': ('#1F5F7A', '#E3EEF3', '#143F52'),
+    'accounts': ('#1F5F7A', '#E3EEF3', '#143F52'),
 }
 
 
@@ -1162,7 +1164,8 @@ h1,h2,h3,h4,h5{ color:var(--cf-ink) !important; }
 """
 
 
-STEP_LABELS = {'import': '匯入資料', 'schedule': '開始排班', 'issues': '處理問題', 'review': '確認班表', 'analytics': '看成效'}
+STEP_LABELS = {'import': '匯入資料', 'schedule': '開始排班', 'issues': '處理問題', 'review': '確認班表', 'analytics': '看成效',
+               'accounts': '帳號管理'}
 _CIRCLED = '①②③④⑤'
 
 
@@ -1306,3 +1309,41 @@ def family_heading(n):
         st.markdown(f'<div class="cf-family">還有 <em>{int(n)} 個家庭</em>需要您看一下</div>', unsafe_allow_html=True)
     else:
         st.markdown('<div class="cf-family">所有家庭的服務都已排好 ✓</div>', unsafe_allow_html=True)
+
+
+# ---------- 登入（第一次使用時建立主管帳號） ----------
+_AUTH_TEXT = {
+    'login': ('登入 HomeCare AI', '請輸入主管或居督的帳號與密碼。', '登入',
+              '忘記密碼或帳號被鎖定，請主管在「👥 帳號管理」重設密碼。'),
+    'setup': ('第一次使用：建立主管帳號', '系統還沒有任何帳號。先建立一位主管，之後由主管在「👥 帳號管理」新增居督帳號。',
+              '建立主管帳號並登入', '主管可以使用全部功能，包含主管報表與帳號管理；請妥善保管密碼。'),
+}
+
+
+def auth_card(mode, min_length=8):
+    """置中的登入卡片（只負責畫面，驗證在 app.py 呼叫 auth）。
+
+    mode：login（帳號、密碼）／setup（第一次使用：帳號、姓名、密碼兩次）。
+    元件 key：login_user、login_pw／setup_user、setup_name、setup_pw1、setup_pw2。
+    回傳 (送出的欄位 dict 或 None, 訊息容器)；訊息容器給呼叫端放 st.error／st.success。
+    """
+    title, sub, button, foot = _AUTH_TEXT[mode]
+    _, middle, _ = st.columns([1, 1.3, 1])
+    with middle:
+        st.markdown(run_card_html(title, sub), unsafe_allow_html=True)
+        with st.form(f'cf_auth_{mode}', clear_on_submit=False):
+            if mode == 'setup':
+                username = st.text_input('帳號（英文或數字）', key='setup_user', placeholder='例如 boss01')
+                name = st.text_input('姓名', key='setup_name', placeholder='畫面右側顯示用')
+                password = st.text_input(f'密碼（至少 {min_length} 個字）', type='password', key='setup_pw1')
+                confirm = st.text_input('再輸入一次密碼', type='password', key='setup_pw2')
+            else:
+                username = st.text_input('帳號', key='login_user')
+                password = st.text_input('密碼', type='password', key='login_pw')
+                name = confirm = None
+            submitted = st.form_submit_button(button, type='primary', width='stretch')
+        note = st.container()
+        st.caption(foot)
+    if not submitted:
+        return None, note
+    return {'username': username, 'name': name, 'password': password, 'confirm': confirm}, note

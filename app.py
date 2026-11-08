@@ -63,6 +63,8 @@ from dispatch_workflow import (WorkflowStore, attach_blocks, blocked_reason, ren
                                fresh_demo_store_path, discard_demo_store, history_summary)
 from substitute_rank import RULE_TEXT as SUBSTITUTE_RULE_TEXT
 from issue_center import unassigned_issues, assigned_overlaps, transition_issues, issue_summary, GROUP_NAMES as ISSUE_GROUP_NAMES
+import auth
+import audit_log
 
 
 from datetime import datetime
@@ -339,7 +341,8 @@ from careflow_ui import (render_brand, section_title, render_summary, chips, flo
                          render_header, side_brand, ready_cards, kpi_cards, conn_card, badges, reason_badge,
                          time_shift_html, line_preview, line_preview_empty, impact_cards, advice_cards,
                          FONT_SCALES, render_stepper, result_hero, family_heading, import_card,
-                         RUN_STEPS, run_stage_of, run_steps_markdown, run_card_html, signoff_head_html, badge_html)
+                         RUN_STEPS, run_stage_of, run_steps_markdown, run_card_html, signoff_head_html, badge_html,
+                         auth_card)
 from import_health import build_health_items, health_status, LIGHT_ICON, RED as _HEALTH_RED
 
 # ==========================================
@@ -348,7 +351,7 @@ from import_health import build_health_items, health_status, LIGHT_ICON, RED as 
 
 # ==========================================
 
-M_IMPORT, M_SCHEDULE, M_ISSUES, M_REVIEW, M_ANALYTICS = MODULE_KEYS
+M_IMPORT, M_SCHEDULE, M_ISSUES, M_REVIEW, M_ANALYTICS, M_ACCOUNTS = MODULE_KEYS
 
 defaults = PipelineConfig()
 # 固定交通來源：機車=OSRM；大眾運輸=Google Routes TRANSIT。
@@ -413,6 +416,20 @@ if _demo_period:
 if st.session_state.get('osrm_source_choice') not in _OSRM_CHOICES:
     st.session_state['osrm_source_choice'] = _SETTING_DEFAULTS['osrm_source_choice']
 
+# ---------- 登入：目前使用者（st.session_state['auth_user']） ----------
+# 每次重跑都重新讀帳號：被停用就登出、角色異動立即生效。CAREFLOW_AUTH=0 時不登入，以主管權限使用（本機開發）。
+_AUTH_ON = auth.enabled()
+_LOCAL_USER = {'username': 'local', 'name': '本機開發', 'role': auth.MANAGER}
+if _AUTH_ON:
+    _user = auth.current_user((st.session_state.get('auth_user') or {}).get('username'))
+    if _user is None:
+        st.session_state.pop('auth_user', None)
+    else:
+        st.session_state['auth_user'] = _user
+else:
+    _user = _LOCAL_USER
+_is_manager = _user is not None and _user['role'] == auth.MANAGER
+
 # 方案 A：步驟上鎖。資料未匯入前「開始排班」上鎖；班表未產生前 03／04／主管報表上鎖。
 # 停在已上鎖的步驟（例如資料修改後舊班表被清除）時，退回最後一個可用的步驟。
 def _flow_locks():
@@ -423,6 +440,13 @@ def _flow_locks():
         _why = '請先在「② 開始排班」產生班表' if M_SCHEDULE not in locks else '請先匯入資料並完成排班'
         for _k in (M_ISSUES, M_REVIEW, M_ANALYTICS):
             locks[_k] = _why
+    # 角色權限（auth.can_access）：居督不能進主管報表與帳號管理；登入關閉時沒有帳號管理頁。
+    _role = (_user or {}).get('role')
+    for _k in (M_ANALYTICS, M_ACCOUNTS):
+        if not auth.can_access(_role, _k):
+            locks[_k] = '只有主管帳號可以使用'
+    if not _AUTH_ON:
+        locks[M_ACCOUNTS] = '登入功能已關閉（CAREFLOW_AUTH=0）'
     return locks
 
 
@@ -448,6 +472,7 @@ def _module_badge(key):
 
 with st.sidebar:
     side_brand()
+    _sidebar_account = st.container()
     st.markdown('<div class="cf-group">目前狀態</div>', unsafe_allow_html=True)
     _sidebar_status = st.container()
     _sidebar_wake = st.container()
@@ -483,6 +508,35 @@ with _head_col:
 with _font_col:
     st.segmented_control('字體大小', list(FONT_SCALES), key='cf_font_scale',
                          help='整個畫面的字體大小；選擇會保留到下次換頁。')
+
+
+def _render_login():
+    """沒登入時只顯示登入卡片；系統還沒有任何帳號時，改為建立第一位主管。"""
+    _first_run = not auth.has_users()
+    _values, _note = auth_card('setup' if _first_run else 'login', auth.MIN_PASSWORD_LENGTH)
+    if _values is None:
+        return
+    _account = auth.normalize_username(_values['username'])
+    if _first_run:
+        _problem = auth.password_error(_values['password'], _values['confirm']) or \
+            auth.create_first_manager(_values['username'], _values['name'], _values['password'])
+        if _problem:
+            _note.error(_problem)
+            return
+        audit_log.record('account', account=_account, action='create_first_manager', target=_account, role=auth.MANAGER)
+    _who, _message = auth.verify(_values['username'], _values['password'])
+    if _who is None:
+        audit_log.record('login_failed', account=_account or '(空白)')
+        _note.error(_message)
+        return
+    audit_log.record('login', account=_who['username'], role=_who['role'])
+    st.session_state['auth_user'] = _who
+    st.rerun()
+
+
+if _user is None:
+    _render_login()
+    st.stop()
 # 方案 A：頂部步驟列是唯一的換頁方式。位置先佔好，等資料讀完（知道這次有沒有資料）再畫，
 # 這樣剛上傳檔案的那一次畫面，「開始排班」就會立刻解鎖，不會慢一拍。每次執行只畫一次。
 _stepper_slot = st.container()
@@ -601,6 +655,141 @@ _rules_changed = any(st.session_state.get(_k) != _SETTING_DEFAULTS.get(_k)
 with _sidebar_rules.expander('⚙️ 排班規則設定' + ('　· 已調整' if _rules_changed else ''), expanded=False):
     st.caption('修改後需重新排班；已產生的班表會被清除。')
     render_dispatch_settings()
+
+
+def _logout():
+    """按鈕回呼：登出（只清掉登入狀態；這個連線的排班進度仍由自動存檔保存）。"""
+    audit_log.record('logout', account=_user['username'])
+    st.session_state.pop('auth_user', None)
+
+
+def _open_accounts():
+    """按鈕回呼：前往帳號管理，記下原本所在的頁面，返回時回到那裡。"""
+    if st.session_state.get('cf_module') != M_ACCOUNTS:
+        st.session_state['_accounts_return'] = st.session_state.get('cf_module', M_IMPORT)
+    st.session_state['cf_module'] = M_ACCOUNTS
+
+
+with _sidebar_account:
+    if not _AUTH_ON:
+        st.caption('🔓 登入功能已關閉（CAREFLOW_AUTH=0），以主管權限使用。')
+    else:
+        st.caption(f"👤 {_user['name']}（{_user['role']}）")
+        _acc1, _acc2 = st.columns(2)
+        _acc1.button('登出', key='auth_logout', on_click=_logout, width='stretch')
+        if _is_manager:
+            _acc2.button('👥 帳號管理', key='auth_open_accounts', on_click=_open_accounts, width='stretch',
+                         type='primary' if _module == M_ACCOUNTS else 'secondary')
+        with st.expander('🔑 變更我的密碼', expanded=False):
+            with st.form('cf_own_password', clear_on_submit=True):
+                _old_pw = st.text_input('目前的密碼', type='password', key='own_pw_old')
+                _new_pw = st.text_input(f'新密碼（至少 {auth.MIN_PASSWORD_LENGTH} 個字）', type='password', key='own_pw_new')
+                _new_pw2 = st.text_input('再輸入一次新密碼', type='password', key='own_pw_new2')
+                if st.form_submit_button('更新密碼', width='stretch'):
+                    _problem = auth.change_own_password(_user['username'], _old_pw, _new_pw, _new_pw2)
+                    if _problem:
+                        st.error(_problem)
+                    else:
+                        audit_log.record('account', account=_user['username'], action='change_own_password',
+                                         target=_user['username'])
+                        st.success('密碼已更新，下次登入請用新密碼。')
+    st.divider()
+
+
+def _account_notice(kind, text):
+    st.session_state['_account_notice'] = (kind, text)
+
+
+def _render_accounts_page():
+    """主管專用：帳號清單、新增帳號、重設密碼、停用／啟用帳號、存取稽核紀錄。帳號異動都寫進稽核紀錄。"""
+    _notice = st.session_state.pop('_account_notice', None)
+    if _notice:
+        (st.success if _notice[0] == 'ok' else st.error)(_notice[1])
+    _list = auth.users()
+
+    subhead(f'目前帳號 · {len(_list)} 個')
+    show_table(pd.DataFrame([{'帳號': u['username'], '姓名': u['name'], '角色': u['role'],
+                              '狀態': '已停用' if not u['active'] else ('鎖定中' if u['locked'] else '可登入'),
+                              '最後登入': (u['last_login'] or '尚未登入')[:16].replace('T', ' '),
+                              '建立時間': (u['created_at'] or '')[:10].replace('-', '/')} for u in _list]),
+               hide_index=True, width='stretch')
+    st.caption('主管可以使用全部功能（含主管報表與帳號管理）；居督可以使用 ① 匯入資料～④ 確認班表。'
+               f'密碼連續輸錯 {auth.MAX_FAILED} 次會鎖定 {auth.LOCK_SECONDS // 60} 分鐘，重設密碼即可解鎖。')
+
+    subhead('新增帳號')
+    with st.form('cf_account_create', clear_on_submit=True):
+        _c1, _c2 = st.columns(2)
+        _new_user = _c1.text_input('帳號（英文或數字）', key='acct_new_user', placeholder='例如 amy01')
+        _new_name = _c2.text_input('姓名', key='acct_new_name')
+        _new_role = st.radio('角色', auth.ROLES, index=1, horizontal=True, key='acct_new_role')
+        _new_pw = st.text_input(f'初始密碼（至少 {auth.MIN_PASSWORD_LENGTH} 個字；請對方登入後自己更改）',
+                                type='password', key='acct_new_pw')
+        if st.form_submit_button('➕ 新增帳號', type='primary', width='stretch'):
+            _problem = auth.create_user(_new_user, _new_name, _new_role, _new_pw)
+            if _problem:
+                st.error(_problem)
+            else:
+                _target = auth.normalize_username(_new_user)
+                audit_log.record('account', account=_user['username'], action='create', target=_target, role=_new_role)
+                _account_notice('ok', f'已新增帳號 {_target}（{_new_role}）。')
+                st.rerun()
+
+    _names = [u['username'] for u in _list]
+    _label = {u['username']: f"{u['username']}｜{u['name']}（{u['role']}）" for u in _list}
+
+    subhead('重設密碼')
+    with st.form('cf_account_reset', clear_on_submit=True):
+        _r1, _r2 = st.columns(2)
+        _who = _r1.selectbox('帳號', _names, format_func=_label.get, key='acct_reset_user')
+        _reset_pw = _r2.text_input(f'新密碼（至少 {auth.MIN_PASSWORD_LENGTH} 個字）', type='password', key='acct_reset_pw')
+        if st.form_submit_button('🔑 重設密碼（同時解除鎖定）', width='stretch'):
+            _problem = auth.set_password(_who, _reset_pw)
+            if _problem:
+                st.error(_problem)
+            else:
+                audit_log.record('account', account=_user['username'], action='reset_password', target=_who)
+                _account_notice('ok', f'已重設 {_who} 的密碼，請把新密碼告訴本人。')
+                st.rerun()
+
+    subhead('停用／啟用帳號')
+    _s1, _s2 = st.columns([2, 1], vertical_alignment='bottom')
+    _pick = _s1.selectbox('帳號', _names, format_func=_label.get, key='acct_active_user')
+    _row = next((u for u in _list if u['username'] == _pick), None)
+    if _row is not None:
+        _to_active = not _row['active']
+        if _s2.button('✅ 啟用帳號' if _to_active else '⛔ 停用帳號', key='acct_toggle_active', width='stretch'):
+            if not _to_active and _pick == _user['username']:
+                _problem = '不能停用自己目前登入的帳號；請由另一位主管處理。'
+            else:
+                _problem = auth.set_active(_pick, _to_active)
+            if _problem:
+                st.error(_problem)
+            else:
+                audit_log.record('account', account=_user['username'], action='enable' if _to_active else 'disable', target=_pick)
+                _account_notice('ok', f"已{'啟用' if _to_active else '停用'}帳號 {_pick}。")
+                st.rerun()
+    st.caption('停用後對方立刻不能登入（已登入的畫面下次操作就會登出）；至少要保留一位可以登入的主管。')
+
+    subhead('存取稽核紀錄')
+    st.caption('登入、登入失敗、登出與帳號異動都會記錄；每筆帶前一筆的雜湊，可以檢查有沒有被改過。')
+    if st.button('檢查並顯示最近 50 筆', key='audit_show', width='stretch'):
+        _state = audit_log.verify()
+        if _state['ok']:
+            st.success(f"共 {_state['count']:,} 筆，雜湊鏈完整。")
+        else:
+            st.error(f"第 {_state['first_bad_seq']} 筆起雜湊不一致，紀錄可能被修改，請通報機構負責人。")
+        show_table(audit_log.as_table(50), hide_index=True, width='stretch',
+                   column_config={'內容': st.column_config.TextColumn(width='large')})
+
+
+if _module == M_ACCOUNTS:
+    # 帳號管理不需要排班資料：畫完就停，不讀 Excel、不跑排班。
+    _draw_stepper(has_data=bool(st.session_state.get('_data_source_key')))
+    module_header(M_ACCOUNTS)
+    _render_accounts_page()
+    step_action_bar(M_ACCOUNTS, '完成，回到排班作業 →', target=st.session_state.get('_accounts_return', M_IMPORT),
+                    hint='帳號異動會寫進存取稽核紀錄。')
+    st.stop()
 
 config = PipelineConfig(
 
