@@ -68,6 +68,7 @@ import auth
 import audit_log
 import attendance_reconcile as _att
 from checkin import runner as _checkin_runner, store as _checkin_store
+import kpi_metrics
 
 
 from datetime import datetime
@@ -180,6 +181,10 @@ def download_button_quiet(label, data, file_name=None, mime=None, key=None, **kw
         return st.download_button(label, data, file_name, mime, key=key, on_click='ignore', **kwargs)
     except (TypeError, ValueError):
         return st.download_button(label, data, file_name, mime, key=key, **kwargs)
+
+def _kpi_db():
+    """試辦 KPI 資料檔：示範模式用暫存檔（放在示範工作紀錄旁，一起清掉），平常用正式的 pilot_kpi.sqlite3（None）。"""
+    return kpi_metrics.demo_db_path(st.session_state.get('_demo_store_path')) if st.session_state.get('demo_mode') else None
 
 def caregiver_label(value):
     identifier = str(value).strip()
@@ -3126,8 +3131,32 @@ if "last_result" in st.session_state:
         subhead('個案與居服員媒合、候選人推薦')
 
     # ---------- 05 主管報表：一頁式報告 ----------
+    _analytics_view = None
     if _module == M_ANALYTICS:
         module_header(M_ANALYTICS)
+        _analytics_view = big_tabs(['主管報表', '試辦 KPI'], 'cf_analytics_view', icons=['📊', '🎯'], size='medium')
+
+    # ---------- 05 試辦 KPI：3 組 8 項、基準月 vs 試辦月（只有主管能進 05） ----------
+    if _module == M_ANALYTICS and _analytics_view == '試辦 KPI':
+        from kpi_view import render_pilot_kpis
+
+        def _kpi_audit(action, **detail):
+            audit_log.record('kpi', account=(_user or {}).get('username', ''), action=action, **detail)
+        if st.session_state.get('demo_mode'):
+            st.info('🎬 示範模式：存的基準月／試辦月寫在示範暫存檔，關掉示範模式後不會留在正式紀錄。')
+        try:
+            render_pilot_kpis(
+                dict(tasks=df_tasks, assignments=_effective_for_kpi, routes=df_route_result, monthly_payroll=monthly_payroll,
+                     primary_map=config.client_primary_map, diagnostics=_pending_diagnostics, caregivers=res.get('df_cg'),
+                     start=res.get('range_start') or range_start, end=res.get('range_end') or range_end,
+                     normal_daily_hours=config.normal_daily_hours, leaves=_workflow_store.blocks()),
+                institution_key, _kpi_db(), (_user or {}).get('username', ''), show_table, export_frame,
+                download_button_quiet, on_saved=None if st.session_state.get('demo_mode') else _kpi_audit)
+        except Exception as exc:
+            st.error('試辦 KPI 暫時無法產生，班表與其他報表不受影響。原因：' + str(exc))
+        step_action_bar(M_ANALYTICS, hint='試辦 KPI 只供檢視與登錄，不影響班表。')
+
+    if _module == M_ANALYTICS and _analytics_view == '主管報表':
         st.caption(f'統計範圍：{_scope_label}。本頁只呈現管理數據，不會更動班表；排班與異常處理請回到 ①～④。')
         _hours_total = pd.to_numeric(daily_payroll.get('服務工時', pd.Series(dtype=float)), errors='coerce').sum() if not daily_payroll.empty else 0.0
         _travel_hours = pd.to_numeric(daily_payroll.get('轉場工時', pd.Series(dtype=float)), errors='coerce').sum() if not daily_payroll.empty else 0.0

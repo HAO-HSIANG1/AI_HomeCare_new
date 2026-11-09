@@ -4537,7 +4537,7 @@ def identity_display(frame, caregivers=None, clients=None):
     if not isinstance(frame,pd.DataFrame):return frame
     caregivers,clients = caregivers or {},clients or {}
     out=frame.copy()
-    caregiver_cols={'居服員ID','居服員','編號','派單居服員','原派居服員','新派居服員','最終派單居服員','AI建議居服員','歷史首選居服員ID','請假居服員','排定居服員','打卡居服員'}
+    caregiver_cols={'居服員ID','居服員','編號','派單居服員','原派居服員','新派居服員','最終派單居服員','AI建議居服員','歷史首選居服員ID','請假居服員','排定居服員','打卡居服員','主責居服員'}
     client_cols={'案家ID','案號','內部案號','起點案號'}
     for col in out.columns:
         mapping = caregivers if col in caregiver_cols else (clients if col in client_cols else None)

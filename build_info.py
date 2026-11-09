@@ -4,4 +4,4 @@ REQUIRED_MODULES = ('caregiver_engine', 'monthly_scheduler', 'agency_rules', 'sc
                     'dispatch_workflow', 'careflow_ui', 'dashboard_view', 'dashboard_metrics', 'schedule_checks',
                     'workbook_edit', 'repair_workbook', 'address_geocoder', 'dispatch_message',
                     'temp_case', 'eligibility', 'pending_clients', 'pending_advice', 'analysis_bg', 'issue_center', 'substitute_rank', 'demo_cases', 'session_store', 'traffic_wake', 'qualification_recheck',
-                    'auth', 'audit_log', 'attendance_reconcile')
+                    'auth', 'audit_log', 'attendance_reconcile', 'kpi_metrics', 'kpi_view')
