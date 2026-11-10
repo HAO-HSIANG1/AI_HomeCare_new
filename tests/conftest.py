@@ -18,3 +18,5 @@ def _isolated_travel_cache(tmp_path, monkeypatch):
     monkeypatch.delenv('CAREFLOW_CHECKIN_PUBLIC_URL', raising=False)
     # 試辦 KPI：計時、基準月／試辦月與問卷分數寫到暫存資料夾，不碰正式的 output_results/pilot_kpi.sqlite3。
     monkeypatch.setenv('CAREFLOW_KPI_DB', str(tmp_path / 'pilot_kpi.sqlite3'))
+    # 錯誤紀錄檔（error_log.py）：寫到暫存資料夾，不碰正式的 output_results/logs。
+    monkeypatch.setenv('CAREFLOW_LOG_DIR', str(tmp_path / 'logs'))

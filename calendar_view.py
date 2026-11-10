@@ -62,38 +62,38 @@ def build_schedule_rows(result, tasks, caregivers, overrides=None, client_names=
 _GRID_CSS = """
 .cf-workspace {--px:64px;font-family:var(--st-font),sans-serif; color:#183d3d; overflow:auto; max-height:min(760px,78vh); border:1px solid #dae8e2;border-radius:16px;background:#fff;scroll-behavior:smooth}
 .cf-head {display:grid;position:sticky;top:0;z-index:5;background:#f1f7f4;border-bottom:1px solid #cfe2d9}
-.cf-head div {padding:8px 6px;font-size:13px;font-weight:750;border-left:1px solid #e3eee8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;text-align:center}
-.cf-head div:first-child {border-left:0;color:#6b807b;font-weight:600;font-size:12px;display:flex;align-items:center;justify-content:center}
-.cf-head .cf-dn {display:block;font-size:12px;font-weight:600;color:#5f7a72;letter-spacing:.04em}
-.cf-head .cf-dd {display:block;font-size:17px;font-weight:800;line-height:1.25;color:#17493f}
-.cf-head .cf-cnt {display:block;font-size:11px;font-weight:600;color:#7a918a}
+.cf-head div {padding:10px 6px;font-size:15px;font-weight:750;border-left:1px solid #e3eee8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;text-align:center}
+.cf-head div:first-child {border-left:0;color:#6b807b;font-weight:600;font-size:14px;display:flex;align-items:center;justify-content:center}
+.cf-head .cf-dn {display:block;font-size:14px;font-weight:600;color:#5f7a72;letter-spacing:.04em}
+.cf-head .cf-dd {display:block;font-size:22px;font-weight:800;line-height:1.25;color:#17493f}
+.cf-head .cf-cnt {display:block;font-size:13.5px;font-weight:600;color:#7a918a}
 .cf-head .cf-wk {background:#fbf0ee}
 .cf-head .cf-wk .cf-dn,.cf-head .cf-wk .cf-dd {color:#b0503f}
 .cf-head .cf-today .cf-dd {display:inline-block;min-width:30px;border-radius:999px;background:#127b6b;color:#fff;padding:0 7px}
 .cf-board {position:relative;display:grid}
-.cf-time {position:absolute;left:0;right:0;text-align:center;color:#6b807b;font-size:11.5px;transform:translateY(-8px)}
+.cf-time {position:absolute;left:0;right:0;text-align:center;color:#6b807b;font-size:14px;font-weight:600;transform:translateY(-9px)}
 .cf-lane {position:relative;min-width:0;border-left:1px solid #e3eee8;background-color:#fff;background-image:linear-gradient(to bottom,transparent calc(100% - 1px),#edf3ef 0);background-size:100% var(--px)}
 .cf-lane.cf-wk {background-color:#fffbfa}
-.cf-card {position:absolute;left:3px;right:3px;overflow:hidden;border:1px solid #a9d9c7;border-left:4px solid #16816c;border-radius:8px;background:#dff4eb;padding:4px 6px;box-sizing:border-box;cursor:pointer;font-size:12px;line-height:1.35;z-index:2;user-select:none;transition:box-shadow .12s}
+.cf-card {position:absolute;left:3px;right:3px;overflow:hidden;border:1px solid #a9d9c7;border-left:4px solid #16816c;border-radius:8px;background:#dff4eb;padding:6px 8px;box-sizing:border-box;cursor:pointer;font-size:15px;line-height:1.4;z-index:2;user-select:none;transition:box-shadow .12s}
 .cf-card:hover {box-shadow:0 3px 10px #0f4b3f33;z-index:3}
-.cf-card strong {display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px;padding-right:20px}
+.cf-card strong {display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:17px;padding-right:24px}
 .cf-card span {display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cf-card .cf-event-time {font-variant-numeric:tabular-nums;color:#285a4e}
-.cf-week .cf-card {font-size:11px;padding:3px 5px}
-.cf-week .cf-card strong {font-size:12px;padding-right:16px}
-.cf-week .cf-handle {font-size:14px;line-height:16px;padding:1px 3px}
+.cf-week .cf-card {font-size:14px;padding:5px 7px}
+.cf-week .cf-card strong {font-size:16px;padding-right:22px}
+.cf-week .cf-handle {font-size:17px;line-height:20px;padding:1px 4px}
 .cf-card[data-tag="隔週"] {background:#eeebff;border-color:#c7bcf5;border-left-color:#8067ce}
 .cf-card[data-tag="代班"],.cf-card[data-tag="已調整"] {background:#fff1d9;border-color:#f4d394;border-left-color:#e49a19}
 .cf-card:focus {outline:2px solid #127b6b;outline-offset:1px}
 .cf-card[draggable="true"]:active {cursor:grabbing}
 .cf-lane.cf-over {background-color:#f0f9f5;box-shadow:inset 0 0 0 2px #248974}
-.cf-hint {color:#667e76;font-size:12px;margin:9px 0}
+.cf-hint {color:#667e76;font-size:15px;margin:9px 0}
 .cf-handle {position:absolute;right:2px;top:2px;border:0;border-radius:5px;background:#ffffffaa;color:#155b4d;padding:2px 5px;cursor:grab;touch-action:none;user-select:none;font-size:18px;line-height:22px}
-.cf-details {position:absolute;bottom:2px;right:5px;border:0;background:transparent;color:#175b4d;text-decoration:underline;cursor:pointer;padding:0;font-size:11px}
-.cf-live {padding:7px 12px;margin-bottom:8px;background:#eaf5ee;color:#235b4b;border-radius:8px;font-size:13px;min-height:20px}
+.cf-details {position:absolute;bottom:2px;right:5px;border:0;background:transparent;color:#175b4d;text-decoration:underline;cursor:pointer;padding:0;font-size:14px;font-weight:700}
+.cf-live {padding:7px 12px;margin-bottom:8px;background:#eaf5ee;color:#235b4b;border-radius:8px;font-size:15px;min-height:22px}
 .cf-drag-ghost {position:fixed;pointer-events:none;z-index:10000;background:#135e50;color:white;white-space:pre-line;padding:10px 14px;border-radius:9px;font-size:13px;box-shadow:0 4px 18px #0003}
 .cf-event-person {white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cf-empty {position:absolute;left:0;right:0;top:12px;text-align:center;color:#8aa29a;font-size:12px;pointer-events:none}
+.cf-empty {position:absolute;left:0;right:0;top:12px;text-align:center;color:#8aa29a;font-size:15px;pointer-events:none}
 """
 
 _GRID_JS = r"""
@@ -101,7 +101,7 @@ export default function({parentElement,data,setStateValue}) {
   const root=parentElement.querySelector('#cf-calendar'); root.replaceChildren();
   const days=data.days||[], people=data.people||[], rows=data.rows||[];
   const weekMode=data.mode==='week';
-  const first=480,last=1260,step=30,px=weekMode?64:72;
+  const first=480,last=1260,step=30,px=weekMode?88:96;   // 每 30 分鐘的高度：加高讓卡片放得下大字
   const minute=v=>{const p=(v||'').split(':').map(Number);return p.length===2&&p.every(Number.isFinite)?p[0]*60+p[1]:null};
   const clock=n=>String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');
   const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n};
@@ -115,9 +115,9 @@ export default function({parentElement,data,setStateValue}) {
   const lanes=weekMode?days.map(d=>({id:data.person,day:d,label:d})):people.map(p=>({id:p.id,day:days[0],label:p.label}));
   const status=el('div','cf-live','點卡片或「詳情」查看；按住右上角 ⠿ 移動。');status.setAttribute('aria-live','polite');root.appendChild(status);
   const board=el('div','cf-workspace'+(weekMode?' cf-week':''));board.style.setProperty('--px',px+'px');
-  const minLane=weekMode?96:150;
-  const columns='52px repeat('+lanes.length+', minmax('+minLane+'px, 1fr))';
-  const minWidth=(52+lanes.length*minLane)+'px';
+  const minLane=weekMode?120:170;
+  const columns='62px repeat('+lanes.length+', minmax('+minLane+'px, 1fr))';
+  const minWidth=(62+lanes.length*minLane)+'px';
   const head=el('div','cf-head');head.style.gridTemplateColumns=columns;head.style.minWidth=minWidth;head.appendChild(el('div','','時間'));
   lanes.forEach(l=>{
     const cell=el('div','');
@@ -292,27 +292,59 @@ def _assignment_dialog(row, labels, on_list_candidates, can_reassign, can_move=F
             _close_assignment_dialog()
             st.rerun()
         return
-    if st.button("檢查並排序可派人選", key="cf_check_" + task_id, disabled=not callable(on_list_candidates)):
-        try:
-            with st.spinner("正在檢查候選人，包含交通時間，請稍候…"):
-                ranked = on_list_candidates(task_id, list(labels))
-            st.session_state["cf_dialog_candidates"] = {"task_id": task_id, "rows": ranked or []}
-        except Exception as exc:
-            st.error("候選人檢查未完成：" + str(exc))
     saved = st.session_state.get("cf_dialog_candidates", {})
+    # 打開視窗就自動檢查一次（同一筆服務只算一次）：可派的人排最上面並標「推薦」，不必再按按鈕
+    if saved.get("task_id") != task_id and callable(on_list_candidates):
+        try:
+            with st.spinner("正在檢查誰可以排（含交通時間）…"):
+                ranked = on_list_candidates(task_id, list(labels))
+            saved = {"task_id": task_id, "rows": ranked or []}
+            st.session_state["cf_dialog_candidates"] = saved
+        except Exception as exc:
+            st.error("候選人檢查未完成，仍可直接選人：" + str(exc))
+            st.session_state["cf_dialog_candidates"] = {"task_id": task_id, "rows": []}   # 不要每次重畫都重試
     ranked = saved.get("rows", []) if saved.get("task_id") == task_id else []
     status = {str(r.get("cg_id") or r.get("居服員ID")): r for r in ranked}
-    # 依代班挑選順序（熟悉→前一案交通→本月工時→年資）排列；可派者附上挑選理由。
+    # 依代班挑選順序（熟悉→前一案交通→本月工時→年資）排列；可派的在最上面，前 3 位標「推薦」
     position = {cg: i for i, cg in enumerate(status)}
     choices = sorted(labels, key=lambda cg: (not status.get(cg, {}).get("available", False), position.get(cg, len(position)), cg))
+    ok_list = [cg for cg in choices if status.get(cg, {}).get("available")]
+    top = {cg: i + 1 for i, cg in enumerate(ok_list[:3])}
+
+    def _short(text, n=34):
+        text = str(text or "").strip()
+        return text if len(text) <= n else text[:n] + "…"
+
     def option_label(cg):
         info = status.get(cg)
         if info is None:
             return labels[cg] + " · 尚未檢查"
-        if info.get("available") and info.get("rank_reason"):
-            return labels[cg] + " · ✅ " + str(info["rank_reason"])
-        return labels[cg] + (" · " + str(info.get("detail") or ("可派" if info.get("available") else "不符合條件")))
-    choice = st.selectbox("指定居服員", choices, index=choices.index(row["cg"]) if row["cg"] in choices else None, placeholder="搜尋或選擇居服員", format_func=option_label, key="cf_dialog_cg_" + task_id)
+        if info.get("available"):
+            head = f"⭐ 推薦 {top[cg]}｜" if cg in top else "✅ 可派｜"
+            return head + labels[cg] + (" · " + _short(info.get("rank_reason")) if info.get("rank_reason") else "")
+        return "⛔ " + labels[cg] + " · " + _short(info.get("detail") or "不符合條件")
+
+    if ranked:
+        if ok_list:
+            st.markdown("<div class='cf-pick-hint'>⭐ <b>推薦人選</b>（已排在選單最上面，可直接選）："
+                        + "、".join(f"{top[cg]}. {labels[cg]}" for cg in ok_list[:3])
+                        + (f"　·　共 {len(ok_list)} 位可派" if len(ok_list) > 3 else "") + "</div>", unsafe_allow_html=True)
+        else:
+            from careflow_ui import reason_badge
+            reasons = {}
+            for r in ranked:                      # 原因歸類成白話類別（時段重疊、休息不足…），再數人數
+                key = reason_badge(r.get("detail"))[0].split(" ", 1)[-1]
+                key = "其他原因" if key == "其他原因" else key
+                reasons[key] = reasons.get(key, 0) + 1
+            common = "、".join(f"{k}（{v} 人）" for k, v in sorted(reasons.items(), key=lambda kv: -kv[1])[:3])
+            st.warning("目前沒有人可以直接排進這個時段。最常見原因：" + common
+                       + "。可以改時間、拆成兩段，或到「③ 處理問題」看系統建議。")
+    if st.button("🔄 重新檢查", key="cf_check_" + task_id, disabled=not callable(on_list_candidates)):
+        st.session_state.pop("cf_dialog_candidates", None)
+        st.rerun()
+    default = row["cg"] if row["cg"] in choices else (ok_list[0] if ok_list else None)
+    choice = st.selectbox("指定居服員", choices, index=choices.index(default) if default in choices else None,
+                          placeholder="搜尋或選擇居服員", format_func=option_label, key="cf_dialog_cg_" + task_id)
     st.caption("可直接選人；按『確認安排』時仍會重新檢查是否可派。")
     scope = st.radio("套用範圍", ["僅本次"], horizontal=True, key="cf_dialog_scope_" + task_id)
     with st.expander("需要更改日期或開始時間？"):

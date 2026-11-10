@@ -53,6 +53,11 @@ def _connect(path=None):
                'salt TEXT NOT NULL, pw_hash TEXT NOT NULL, failed INTEGER NOT NULL DEFAULT 0, '
                'locked_until REAL NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, '
                'created_at TEXT NOT NULL, last_login TEXT)')
+    # 自助申請：註冊新帳號（signup）、忘記密碼（reset）。密碼送出時就雜湊，主管核准後才生效。
+    db.execute("CREATE TABLE IF NOT EXISTS requests(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, "
+               "username TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', role TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', "
+               "salt TEXT NOT NULL, pw_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, "
+               "decided_by TEXT, decided_at TEXT)")
     return db
 
 
@@ -244,6 +249,117 @@ def users(path=None, now=None):
         db.close()
     return [{'username': r['username'], 'name': r['name'], 'role': r['role'], 'active': bool(r['active']),
              'locked': r['locked_until'] > now, 'created_at': r['created_at'], 'last_login': r['last_login']} for r in rows]
+
+
+# ---------------------------------------------------------------- 自助申請（註冊新帳號、忘記密碼）
+SIGNUP, RESET = 'signup', 'reset'
+PENDING, APPROVED, REJECTED = 'pending', 'approved', 'rejected'
+MAX_PENDING = 50                      # 申請單上限，避免被灌爆
+REQUEST_SENT = '已送出申請。請通知主管到「👥 帳號管理」核准，核准後就能用新密碼登入。'
+
+
+def _pending_count(db):
+    return db.execute('SELECT COUNT(*) FROM requests WHERE status=?', (PENDING,)).fetchone()[0]
+
+
+def request_signup(username, name, role, password, confirm, note='', path=None):
+    """入口頁「註冊新帳號」：建立待核准的申請（主管核准才變成帳號）。成功回傳 None，失敗回傳說明。
+
+    身分可以選居督或主管，但只是「申請」；主管核准時可以改成別的身分，避免任何人自己變成主管。"""
+    username = normalize_username(username)
+    problem = _user_error(username, name, role, password) or password_error(password, confirm)
+    if problem:
+        return problem
+    db = _connect(path)
+    try:
+        with db:
+            db.execute('BEGIN IMMEDIATE')
+            if db.execute('SELECT 1 FROM users WHERE username=?', (username,)).fetchone():
+                return f'帳號 {username} 已經有人使用，請換一個；如果是你自己的帳號，請改用「忘記密碼」。'
+            if db.execute('SELECT 1 FROM requests WHERE username=? AND kind=? AND status=?', (username, SIGNUP, PENDING)).fetchone():
+                return f'帳號 {username} 已經送出申請，正在等主管核准。'
+            if _pending_count(db) >= MAX_PENDING:
+                return '待核准的申請太多了，請先請主管處理後再送出。'
+            salt = secrets.token_hex(16)
+            db.execute('INSERT INTO requests(kind, username, name, role, note, salt, pw_hash, created_at) VALUES(?,?,?,?,?,?,?,?)',
+                       (SIGNUP, username, str(name).strip(), role, str(note or '').strip()[:100], salt, _hash(password, salt), _now_text()))
+    finally:
+        db.close()
+    return None
+
+
+def request_reset(username, name, password, confirm, path=None):
+    """入口頁「忘記密碼」：先設好新密碼，送給主管核准。成功回傳 None，失敗回傳說明。
+
+    帳號不存在或姓名對不上時也回傳成功（同一句話），不讓外人試出哪些帳號存在；這種申請不會寫入，主管看不到。"""
+    username = normalize_username(username)
+    problem = password_error(password, confirm)
+    if problem:
+        return problem
+    if not username or not str(name or '').strip():
+        return '請填寫帳號與姓名。'
+    db = _connect(path)
+    try:
+        with db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT name, active FROM users WHERE username=?', (username,)).fetchone()
+            if row is None or not row['active'] or row['name'].strip() != str(name).strip():
+                _hash(password, _DUMMY_SALT)
+                return None
+            if _pending_count(db) >= MAX_PENDING:
+                return '待核准的申請太多了，請直接找主管重設密碼。'
+            db.execute('UPDATE requests SET status=?, decided_by=?, decided_at=? WHERE username=? AND kind=? AND status=?',
+                       (REJECTED, '(新申請取代)', _now_text(), username, RESET, PENDING))     # 同一人只留最新一張
+            salt = secrets.token_hex(16)
+            db.execute('INSERT INTO requests(kind, username, name, role, salt, pw_hash, created_at) VALUES(?,?,?,?,?,?,?)',
+                       (RESET, username, str(name).strip(), '', salt, _hash(password, salt), _now_text()))
+    finally:
+        db.close()
+    return None
+
+
+def pending_requests(path=None):
+    """待核准的申請（給帳號管理頁）：不含密碼雜湊。"""
+    db = _connect(path)
+    try:
+        rows = db.execute('SELECT id, kind, username, name, role, note, created_at FROM requests WHERE status=? ORDER BY id',
+                          (PENDING,)).fetchall()
+    finally:
+        db.close()
+    return [dict(r) for r in rows]
+
+
+def decide_request(request_id, approve, decided_by, role=None, path=None):
+    """主管核准或退回申請。核准註冊＝建立帳號（role 可改）；核准忘記密碼＝換成申請時設定的新密碼並解除鎖定。
+
+    回傳 (申請 dict 或 None, 錯誤說明或 None)。"""
+    db = _connect(path)
+    try:
+        with db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT * FROM requests WHERE id=? AND status=?', (int(request_id), PENDING)).fetchone()
+            if row is None:
+                return None, '這張申請已經處理過了。'
+            info = {k: row[k] for k in ('id', 'kind', 'username', 'name', 'role')}
+            if approve and row['kind'] == SIGNUP:
+                final_role = role or row['role']
+                if final_role not in ROLES:
+                    return None, '角色只能是主管或居督。'
+                if db.execute('SELECT 1 FROM users WHERE username=?', (row['username'],)).fetchone():
+                    return None, f"帳號 {row['username']} 已經存在，請退回這張申請。"
+                db.execute('INSERT INTO users(username, name, role, salt, pw_hash, created_at) VALUES(?,?,?,?,?,?)',
+                           (row['username'], row['name'], final_role, row['salt'], row['pw_hash'], _now_text()))
+                info['role'] = final_role
+            elif approve and row['kind'] == RESET:
+                count = db.execute('UPDATE users SET salt=?, pw_hash=?, failed=0, locked_until=0 WHERE username=?',
+                                   (row['salt'], row['pw_hash'], row['username'])).rowcount
+                if not count:
+                    return None, '找不到這個帳號，請退回這張申請。'
+            db.execute('UPDATE requests SET status=?, decided_by=?, decided_at=? WHERE id=?',
+                       (APPROVED if approve else REJECTED, normalize_username(decided_by), _now_text(), row['id']))
+    finally:
+        db.close()
+    return info, None
 
 
 def can_access(role, module):

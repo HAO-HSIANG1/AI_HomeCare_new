@@ -28,12 +28,13 @@ def _dashboard():
 
 
 def test_headline_cards_numbers():
-    cards = mr.headline_cards(4, 3, 12.5, 70, 30, 10, 8, run_seconds=12.3)
-    assert [c['title'] for c in cards] == ['省下的排班工時', '交通時間減少', '服務完成率']
-    assert cards[0]['number'] == '4.0 小時'          # 4 − 3/60 = 3.95 → 4.0
-    assert cards[1]['number'] == '12.5%'
-    assert '每月省 10 小時' == cards[1]['before']     # 70 × 0.125 ÷ 0.875
-    assert cards[2]['number'] == '80.0%' and '2 筆未派' in cards[2]['note']
+    summary = {'total': 10, 'assigned': 8, 'owned': 8, 'primary': 6, 'primary_share': 75.0, 'travel_share': 0.125}
+    cards = mr.headline_cards(summary, travel_hours=10, total_hours=80, avg_leg_minutes=12.4, run_seconds=12.3)
+    assert [c['title'] for c in cards] == ['排班完成率', '固定人選服務比例', '轉場佔總工時']
+    assert cards[0]['number'] == '80.0%' and '2 筆未派' in cards[0]['note']     # 8 ÷ 10
+    assert cards[1]['number'] == '75.0%' and '6／8' in cards[1]['before']
+    assert cards[2]['number'] == '12.5%' and '平均每段 12 分鐘' in cards[2]['note']
+    assert mr.headline_cards({'total': 0, 'assigned': 0})[1]['number'] == '—'   # 沒資料不硬算
 
 
 def test_advice_and_load():
@@ -51,7 +52,7 @@ def test_advice_and_load():
 def test_report_files():
     D = _dashboard()
     heat, title, fmt = mr.heat_view(D)
-    fig = mr.build_report_figure('11 月 主管報表', '2026-11-01 ～ 2026-11-30', mr.headline_cards(4, 3, 12.5, 70, 30, 10, 8),
+    fig = mr.build_report_figure('11 月 主管報表', '2026-11-01 ～ 2026-11-30', mr.headline_cards({'total': 10, 'assigned': 8, 'primary_share': 75.0, 'owned': 8, 'primary': 6, 'travel_share': 0.1}, 7, 70),
                                  heat, title, fmt, mr.load_distribution(D['workload']), mr.staffing_advice(D))
     assert mr.figure_bytes(fig, 'png')[:8] == b'\x89PNG\r\n\x1a\n'
     assert mr.figure_bytes(fig, 'pdf')[:5] == b'%PDF-'
@@ -88,7 +89,7 @@ def test_analytics_page_renders(tmp_path, monkeypatch):
     app.button(key='cfnav_analytics').click().run()
     assert not app.exception, [e.message for e in app.exception]
     page = ' '.join(m.value for m in app.markdown)
-    for text in ('省下的排班工時', '交通時間減少', '服務完成率', '需求熱圖', '人力負荷分布', 'AI 增聘和調派建議', '下載報告'):
+    for text in ('排班完成率', '固定人選服務比例', '轉場佔總工時', '需求熱圖', '人力負荷分布', 'AI 增聘和調派建議', '下載報告'):
         assert text in page, text
     assert '100.0%' in page                       # 9 筆全部派出
     assert len(app.get('download_button')) >= 2   # PDF、PNG
