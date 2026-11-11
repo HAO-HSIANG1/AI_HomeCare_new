@@ -324,29 +324,16 @@ def _assignment_dialog(row, labels, on_list_candidates, can_reassign, can_move=F
             return head + labels[cg] + (" · " + _short(info.get("rank_reason")) if info.get("rank_reason") else "")
         return "⛔ " + labels[cg] + " · " + _short(info.get("detail") or "不符合條件")
 
-    if ranked:
-        if ok_list:
-            st.markdown("<div class='cf-pick-hint'>⭐ <b>推薦人選</b>（已排在選單最上面，可直接選）："
-                        + "、".join(f"{top[cg]}. {labels[cg]}" for cg in ok_list[:3])
-                        + (f"　·　共 {len(ok_list)} 位可派" if len(ok_list) > 3 else "") + "</div>", unsafe_allow_html=True)
-        else:
-            from careflow_ui import reason_badge
-            reasons = {}
-            for r in ranked:                      # 原因歸類成白話類別（時段重疊、休息不足…），再數人數
-                key = reason_badge(r.get("detail"))[0].split(" ", 1)[-1]
-                key = "其他原因" if key == "其他原因" else key
-                reasons[key] = reasons.get(key, 0) + 1
-            common = "、".join(f"{k}（{v} 人）" for k, v in sorted(reasons.items(), key=lambda kv: -kv[1])[:3])
-            st.warning("目前沒有人可以直接排進這個時段。最常見原因：" + common
-                       + "。可以改時間、拆成兩段，或到「③ 處理問題」看系統建議。")
-    if st.button("🔄 重新檢查", key="cf_check_" + task_id, disabled=not callable(on_list_candidates)):
-        st.session_state.pop("cf_dialog_candidates", None)
-        st.rerun()
+    # 只留做決定需要的：推薦人選、選人、（必要時）改時間、原因。
+    # 「沒有人可排」的原因不在這裡列：選單裡每位都標了 ⛔ 與原因，深入處理在「③ 處理問題」。
+    if ok_list:
+        st.markdown("<div class='cf-pick-hint'>⭐ <b>推薦人選</b>（已排在選單最上面，可直接選）："
+                    + "、".join(f"{top[cg]}. {labels[cg]}" for cg in ok_list[:3])
+                    + (f"　·　共 {len(ok_list)} 位可派" if len(ok_list) > 3 else "") + "</div>", unsafe_allow_html=True)
     default = row["cg"] if row["cg"] in choices else (ok_list[0] if ok_list else None)
     choice = st.selectbox("指定居服員", choices, index=choices.index(default) if default in choices else None,
                           placeholder="搜尋或選擇居服員", format_func=option_label, key="cf_dialog_cg_" + task_id)
-    st.caption("可直接選人；按『確認安排』時仍會重新檢查是否可派。")
-    scope = st.radio("套用範圍", ["僅本次"], horizontal=True, key="cf_dialog_scope_" + task_id)
+    scope = "僅本次"   # 目前只支援單次調整，不再顯示只有一個選項的「套用範圍」
     with st.expander("需要更改日期或開始時間？"):
         changed_date = st.date_input("新日期", value=pd.Timestamp(row['date']).date(), key='cf_edit_date_' + task_id)
         changed_time = st.time_input("新開始時間", value=datetime.strptime(row['start'], '%H:%M').time(), step=300, key='cf_edit_time_' + task_id)
@@ -362,9 +349,6 @@ def _assignment_dialog(row, labels, on_list_candidates, can_reassign, can_move=F
             if changed_date.isoformat() != row['date'] or changed_time.strftime('%H:%M') != row['start']:
                 if not can_move:
                     st.error('主程式未接上時段調整功能，請一起更新 app.py。')
-                    return
-                if scope != '僅本次':
-                    st.warning('更改日期或時段請選「僅本次」。')
                     return
                 duration = datetime.strptime(row['end'], '%H:%M') - datetime.strptime(row['start'], '%H:%M')
                 end = datetime.combine(changed_date, changed_time) + duration

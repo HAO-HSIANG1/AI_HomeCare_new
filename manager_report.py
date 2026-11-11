@@ -32,14 +32,16 @@ def headline_cards(summary, travel_hours=None, total_hours=None, avg_leg_minutes
     travel_ok = travel is not None and travel == travel
     leg = f'平均每段 {avg_leg_minutes:.0f} 分鐘；' if avg_leg_minutes else ''
     return [
-        dict(title='排班完成率', number=f'{rate:.1f}%', ai=True,
+        dict(title='排班完成率', number=f'{rate:.1f}%', ai=True, tone='ai', icon='📅', ring=rate,
              before=f'已派 {assigned:,}／{total:,} 筆', after='',
              note=ran + ('所有服務都已排進班表。' if total and assigned >= total
                          else f'尚有 {total - assigned:,} 筆未派，可回到 ③ 處理問題。')),
-        dict(title='固定人選服務比例', number=(f'{share:.1f}%' if share_ok else '—'),
+        dict(title='固定人選服務比例', number=(f'{share:.1f}%' if share_ok else '—'), tone='primary', icon='🤝',
+             ring=(share if share_ok else None),
              before=(f"固定居服員本人服務 {int(s.get('primary') or 0):,}／{int(s.get('owned') or 0):,} 筆" if share_ok else '沒有固定人選資料'),
              after='', note='越高代表案家越少換人，照顧越連續。'),
-        dict(title='轉場佔總工時', number=(f'{travel * 100:.1f}%' if travel_ok else '—'),
+        dict(title='轉場佔總工時', number=(f'{travel * 100:.1f}%' if travel_ok else '—'), tone='ok', icon='🛵',
+             ring=(travel * 100 if travel_ok else None),
              before=(f'轉場 {float(travel_hours or 0):,.0f}／總工時 {float(total_hours or 0):,.0f} 小時' if travel_ok else '交通尚未計算'),
              after='', note=leg + '越低代表路線越順、居服員花在路上的時間越少。'),
     ]

@@ -506,6 +506,7 @@ body:has(.cf-entry-sub) section[data-testid="stSidebar"], body:has(.cf-entry-sub
 [class*="st-key-cfwkday_"] .stButton button p strong{ font-size:calc(34px * var(--cf-s)); font-weight:900; color:var(--cf-ok); }
 [class*="st-key-cfwkday_"] .stButton button p + p{ color:var(--cf-text) !important; margin-top:2px; }
 [class*="st-key-cfwkday_"] .stButton button p + p + p{ color:var(--cf-primary) !important; }
+[class*="st-key-cfwkday_miss_"] .stButton button p strong{ color:var(--cf-amber); }   /* 還有未排：大字改琥珀色，不要看起來像「全部完成」 */
 /* 每天的忙碌時段（上午／下午／晚上）小長條 */
 .cf-wk-busy{ margin:8px 2px 4px; display:grid; gap:5px; }
 .cf-wk-busy-row{ display:grid; grid-template-columns:2.6em 1fr 2em; align-items:center; gap:6px; font-size:calc(14px * var(--cf-s)); color:var(--cf-muted); }
@@ -527,13 +528,96 @@ body:has(.cf-entry-sub) section[data-testid="stSidebar"], body:has(.cf-entry-sub
 .cf-dd-chip.miss{ background:var(--cf-amber-soft); border:2px solid var(--cf-amber-line); } .cf-dd-chip.miss b{ color:var(--cf-amber-ink); }
 .cf-dd-chip.adj{ background:var(--cf-primary-soft); border:2px dashed var(--cf-primary-2); }
 @media (max-width:900px){ .cf-dd-row{ grid-template-columns:1fr; } }
+
+/* ---- 2026-11-11 卡片美化：A 淡底色＋圖示圓章（impact_cards）、C 一張大卡分格（stat_strip）、小圓環（ring_html） ---- */
+.cf-ring{ width:calc(64px * var(--cf-s)); height:calc(64px * var(--cf-s)); flex:0 0 auto; transform:rotate(-90deg); }
+.cf-ring circle{ fill:none; stroke-width:4.2; }
+.cf-ring .trk{ stroke:var(--cf-line); } .cf-ring .val{ stroke:var(--c, var(--cf-primary)); stroke-linecap:round; }
+.cf-impact > div.cf-imp{ --c:var(--cf-primary); --c-soft:var(--cf-primary-soft); --c-ink:var(--cf-primary-ink);
+  background:var(--c-soft); border:1px solid transparent; }
+.cf-impact > div.cf-imp:before{ display:none; }
+.cf-imp.ai{ --c:var(--cf-ai-1); --c-soft:var(--cf-ai-soft); --c-ink:#312E81; }
+.cf-imp.ok{ --c:var(--cf-ok); --c-soft:var(--cf-ok-soft); --c-ink:#1D5C3C; }
+.cf-imp.amber{ --c:var(--cf-amber); --c-soft:var(--cf-amber-soft); --c-ink:var(--cf-amber-ink); }
+.cf-imp .hd{ display:flex; align-items:center; gap:10px; }
+.cf-imp .ic{ width:calc(40px * var(--cf-s)); height:calc(40px * var(--cf-s)); border-radius:50%; background:var(--cf-card);
+  display:flex; align-items:center; justify-content:center; font-size:calc(20px * var(--cf-s)); flex:0 0 auto; }
+.cf-impact .cf-imp .t{ color:var(--c-ink); }
+.cf-imp .row{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.cf-impact .cf-imp .n, .cf-impact .cf-imp.ai .n{ color:var(--c); }
+.cf-imp .cf-ring .trk{ stroke:var(--cf-card); }
+.cf-impact .cf-imp .vs{ background:var(--cf-card); color:var(--c-ink); }
+.cf-impact .cf-imp .s{ color:var(--cf-text); }
+.cf-kpi-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.cf-kpi-row .cf-ring{ width:calc(54px * var(--cf-s)); height:calc(54px * var(--cf-s)); }
+.cf-kpi.good{ --c:var(--cf-primary); } .cf-kpi.warn{ --c:var(--cf-amber); } .cf-kpi.bad{ --c:var(--cf-red); } .cf-kpi.ai{ --c:var(--cf-ai-1); }
+.cf-strip{ display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); background:var(--cf-card);
+  border:1px solid var(--cf-line); border-radius:20px; margin:8px 0 14px; overflow:hidden; }
+.cf-strip .cell{ --c:var(--cf-primary); padding:16px 22px; border-left:1px solid var(--cf-line); display:flex; flex-direction:column; gap:4px; min-width:0; }
+.cf-strip .cell:first-child{ border-left:0; }
+.cf-strip .cell.warn{ --c:var(--cf-amber); background:var(--cf-amber-soft); } .cf-strip .cell.bad{ --c:var(--cf-red); background:var(--cf-red-soft); }
+.cf-strip .cell.ai{ --c:var(--cf-ai-1); }
+.cf-strip .lb{ font-size:calc(16px * var(--cf-s)); font-weight:700; color:var(--cf-muted); }
+.cf-strip .row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.cf-strip .v{ font-size:calc(40px * var(--cf-s)); font-weight:900; color:var(--c); line-height:1.15; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.cf-strip .v small{ font-size:calc(20px * var(--cf-s)); font-weight:700; color:var(--cf-muted); margin-left:4px; }
+.cf-strip .sub{ font-size:calc(15px * var(--cf-s)); color:var(--cf-text); }
+.cf-strip .cf-ring{ width:calc(50px * var(--cf-s)); height:calc(50px * var(--cf-s)); }
+@media (max-width:900px){ .cf-strip .cell{ border-left:0; border-top:1px solid var(--cf-line); } .cf-strip .cell:first-child{ border-top:0; } }
 </style>
 """
+
+
+TABLE_ALIGN = 'left'   # 全站表格（st.dataframe／st.data_editor）每一欄的對齊方式
+
+
+def _left_aligned_config(data, column_config):
+    """把每一欄的 column_config 補上 alignment（已指定的欄不動）；數字欄原本預設靠右，文字靠左，統一成 TABLE_ALIGN。"""
+    frame = data if hasattr(data, 'columns') else getattr(data, 'data', data)   # pandas Styler → 底下的 DataFrame
+    columns = [str(c) for c in getattr(frame, 'columns', [])]
+    config = dict(column_config or {})
+    for name in columns:
+        value = config.get(name, {})
+        if value is None:                             # None＝隱藏該欄，保持原樣
+            continue
+        if isinstance(value, str):                    # 只給標題的寫法
+            value = {'label': value}
+        if isinstance(value, dict) and 'alignment' not in value:
+            config[name] = {**value, 'alignment': TABLE_ALIGN}
+    return config
+
+
+def uniform_table_alignment():
+    """讓全站表格靠同一邊：包一層 st.dataframe／st.data_editor（app.py 與各 view 模組都經 st 呼叫，一次生效）。
+    只包一次；Streamlit 版本不支援 alignment 時自動退回原本的呼叫。"""
+    for name in ('dataframe', 'data_editor'):
+        original = getattr(st, name)
+        if getattr(original, '_cf_aligned', False):
+            continue
+
+        def wrapped(data=None, *args, _original=original, **kwargs):
+            try:
+                kwargs['column_config'] = _left_aligned_config(data, kwargs.get('column_config'))
+            except Exception:
+                return _original(data, *args, **kwargs)
+            try:
+                return _original(data, *args, **kwargs)
+            except TypeError as exc:                  # 舊版 Streamlit 不認得 alignment
+                if 'alignment' not in str(exc):
+                    raise
+                kwargs['column_config'] = {k: ({x: y for x, y in v.items() if x != 'alignment'} if isinstance(v, dict) else v)
+                                           for k, v in kwargs['column_config'].items()}
+                return _original(data, *args, **kwargs)
+
+        wrapped._cf_aligned = True
+        wrapped.__doc__ = original.__doc__
+        setattr(st, name, wrapped)
 
 
 def inject_css(scale=0.86):
     """全站樣式：舊版樣式表＋ v2026.11 Design System＋方案 C「暖心大字」覆寫層＋最後修正層（每次重跑都要注入一次）。
     scale：字體倍率（標準 0.86／大 0.96／特大 1.08），所有字級都以 calc(px × --cf-s) 計算。"""
+    uniform_table_alignment()
     # --cf-s0＝使用者選的倍率；側邊欄收起來時整頁放大 12%（多出來的寬度拿來放大字，而不是留白）
     st.markdown(CSS + DESIGN_CSS + WARM_CSS + FIX_CSS + TIDY_CSS
                 + f'<style>:root{{--cf-s0:{float(scale):.3f}; --cf-s:var(--cf-s0);}}'
@@ -955,15 +1039,46 @@ def ready_cards(items):
     st.markdown(f'<div class="cf-ready">{html}</div>', unsafe_allow_html=True)
 
 
+def ring_html(percent, label=''):
+    """小圓環（0～100%，超過 100 以滿圈顯示）。顏色跟著外層卡片的 --c；label 給螢幕閱讀器。"""
+    try:
+        value = max(0.0, min(100.0, float(percent)))
+    except (TypeError, ValueError):
+        return ''
+    # r=15.9155 的圓周長剛好是 100，stroke-dasharray 直接寫百分比
+    return (f'<svg class="cf-ring" viewBox="0 0 36 36" role="img" aria-label="{_e(label or f"{value:.0f}%")}">'
+            '<circle class="trk" cx="18" cy="18" r="15.9155"/>'
+            f'<circle class="val" cx="18" cy="18" r="15.9155" stroke-dasharray="{value:.1f} 100"/></svg>')
+
+
 def kpi_cards(items):
-    """KPI 卡：數字與標籤分行顯示，不會截斷。items：[dict(label, value, unit, sub, tone)]，tone：good／warn／bad／ai。"""
+    """KPI 卡：數字與標籤分行顯示，不會截斷。items：[dict(label, value, unit, sub, tone, ring)]，tone：good／warn／bad／ai；
+    ring：0～100 的比例（可省略），有給就在數字右邊畫小圓環。"""
     cards = []
     for it in items:
         unit = f'<small>{_e(it["unit"])}</small>' if it.get('unit') else ''
         sub = f'<span class="sub">{_e(it["sub"])}</span>' if it.get('sub') else ''
+        ring = ring_html(it['ring'], it['label']) if it.get('ring') is not None else ''
+        value = f'<span class="v">{_e(it["value"])}{unit}</span>'
+        if ring:
+            value = f'<span class="cf-kpi-row">{value}{ring}</span>'
         cards.append(f'<div class="cf-kpi {_e(it.get("tone", "good"))}" title="{_e(it.get("help", ""))}">'
-                     f'<span class="lb">{_e(it["label"])}</span><span class="v">{_e(it["value"])}{unit}</span>{sub}</div>')
+                     f'<span class="lb">{_e(it["label"])}</span>{value}{sub}</div>')
     st.markdown('<div class="cf-kpis">' + ''.join(cards) + '</div>', unsafe_allow_html=True)
+
+
+def stat_strip(items):
+    """一張大卡分格的數字列（方案 C）：同一組數字並排、中間細線隔開，比一排白卡整齊。
+    items 同 kpi_cards：[dict(label, value, unit, sub, tone, help, ring)]；tone：good／warn／bad／ai，只改數字顏色。"""
+    cells = []
+    for it in items:
+        tone = it.get('tone', 'good')
+        unit = f'<small>{_e(it["unit"])}</small>' if it.get('unit') else ''
+        sub = f'<span class="sub">{_e(it["sub"])}</span>' if it.get('sub') else ''
+        ring = ring_html(it['ring'], it['label']) if it.get('ring') is not None else ''
+        cells.append(f'<div class="cell {_e(tone)}" title="{_e(it.get("help", ""))}"><span class="lb">{_e(it["label"])}</span>'
+                     f'<span class="row"><span class="v">{_e(it["value"])}{unit}</span>{ring}</span>{sub}</div>')
+    st.markdown('<div class="cf-strip">' + ''.join(cells) + '</div>', unsafe_allow_html=True)
 
 
 def stat_cards(items, cols=4):
@@ -1086,14 +1201,24 @@ def line_preview_empty():
 
 
 def impact_cards(items, cols=2):
-    """效益大數字卡。items：[dict(title, number, before, after, note, ai:bool)]。"""
-    html = ''.join(
-        f'<div class="{"ai" if it.get("ai") else ""}"><div class="t">{_e(it["title"])}</div><div class="n">{_e(it["number"])}</div>'
-        + (f'<span class="vs">{_e(it["before"])}'
-           + (f' <span style="color:#6366F1">➔</span> {_e(it["after"])}' if it.get('after') else '') + '</span>' if it.get('before') else '')
-        + (f'<span class="s">{_e(it["note"])}</span>' if it.get('note') else '') + '</div>'
-        for it in items)
-    st.markdown(f'<div class="cf-impact{" three" if cols == 3 else ""}">{html}</div>', unsafe_allow_html=True)
+    """效益大數字卡（方案 A：淡底色＋左上圖示圓章，可加圓環）。
+
+    items：[dict(title, number, before, after, note, ai:bool, tone, icon, ring)]。
+    tone：ai／primary／ok／amber（預設 ai=True 用 ai，否則 primary）；icon：放在圓章裡的符號；
+    ring：0～100 的比例（可省略），有給就在大數字右邊畫圓環。"""
+    cards = []
+    for it in items:
+        tone = it.get('tone') or ('ai' if it.get('ai') else 'primary')
+        icon = f'<span class="ic" aria-hidden="true">{_e(it["icon"])}</span>' if it.get('icon') else ''
+        ring = ring_html(it['ring'], it['title']) if it.get('ring') is not None else ''
+        vs = ''
+        if it.get('before'):
+            vs = (f'<span class="vs">{_e(it["before"])}'
+                  + (f' ➔ {_e(it["after"])}' if it.get('after') else '') + '</span>')
+        note = f'<span class="s">{_e(it["note"])}</span>' if it.get('note') else ''
+        cards.append(f'<div class="cf-imp {_e(tone)}"><div class="hd">{icon}<span class="t">{_e(it["title"])}</span></div>'
+                     f'<div class="row"><div class="n">{_e(it["number"])}</div>{ring}</div>{vs}{note}</div>')
+    st.markdown(f'<div class="cf-impact{" three" if cols == 3 else ""}">{"".join(cards)}</div>', unsafe_allow_html=True)
 
 
 def heat_legend(low='人力充裕', high='極度缺工'):

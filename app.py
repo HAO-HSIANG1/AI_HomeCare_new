@@ -391,7 +391,7 @@ from careflow_ui import (render_brand, section_title, render_summary, chips, flo
                          time_shift_html, line_preview, line_preview_empty, impact_cards, advice_cards,
                          FONT_SCALES, render_stepper, result_hero, family_heading, import_card,
                          RUN_STEPS, run_stage_of, run_steps_markdown, run_card_html, signoff_head_html, badge_html,
-                         auth_card, stat_cards)
+                         auth_card, stat_cards, stat_strip)
 from import_health import build_health_items, health_status, LIGHT_ICON, RED as _HEALTH_RED
 
 # ==========================================
@@ -1078,7 +1078,8 @@ def _remove_stored_workbook():
 
 # 01：「下載標準範例檔」與「一鍵載入 Demo 資料」共用同一份示範 Excel（虛構資料，姓名已遮蔽）。
 _DEMO_WORKBOOK = pathlib.Path(__file__).with_name('居服機構資料_三工作表_示範版_v1.xlsx')
-_DEMO_PERIOD_START = '2026-10-01'   # demo_cases.py 的固定示範情境以此期間試算
+import demo_cases as _demo_cases
+_DEMO_PERIOD_START = _demo_cases.LEAVE_DEMO_PERIOD_START   # 與 03 頁固定示範情境同一個月（2026/11）
 
 
 def _demo_workbook_bytes():
@@ -1089,7 +1090,7 @@ def _demo_workbook_bytes():
 
 
 def _load_demo_workbook():
-    """按鈕回呼：把示範 Excel 當成上傳檔，並把排班期間對齊示範情境（2026/10 一個月）。"""
+    """按鈕回呼：把示範 Excel 當成上傳檔，並把排班期間對齊 03 頁示範情境（2026/11 一個月）。"""
     data = _demo_workbook_bytes()
     if data is None:
         st.session_state['_demo_load_error'] = f'找不到示範檔「{_DEMO_WORKBOOK.name}」，請確認它和 app.py 放在同一個資料夾。'
@@ -1204,7 +1205,7 @@ try:
                     with _demo_col.container(key='cfai_demo'):
                         st.button('✨ 一鍵載入 Demo 資料', key='load_demo_workbook', on_click=_load_demo_workbook,
                                   disabled=_demo_bytes is None, width='stretch',
-                                  help='載入虛構示範機構資料，排班期間自動設為 2026/10/01 起一個月（與 03 頁示範情境一致）。')
+                                  help=f'載入虛構示範機構資料，排班期間自動設為 {pd.Timestamp(_DEMO_PERIOD_START):%Y/%m/%d} 起一個月（與 03 頁示範情境一致）。')
                     if st.session_state.get('_demo_load_error'):
                         st.error(st.session_state.pop('_demo_load_error'))
                     with st.expander('Excel 需要哪些工作表？'):
@@ -2286,7 +2287,7 @@ if "last_result" in st.session_state:
         _unassigned = total_tasks - assigned_count
         kpi_cards([
             dict(label='排班完成率', value=f'{assign_rate:.1f}', unit='%', tone='good' if assign_rate >= 95 else 'warn',
-                 sub=f'{assigned_count:,} / {total_tasks:,} 筆成功指派', help='已納入人工改派，包含整個選定期間。'),
+                 sub=f'{assigned_count:,} / {total_tasks:,} 筆成功指派', help='已納入人工改派，包含整個選定期間。', ring=assign_rate),
             dict(label='已排 / 全部服務', value=f'{assigned_count:,}', unit=f'/ {total_tasks:,} 筆', tone='good',
                  sub='含人工改派與臨時異動'),
             dict(label='未排服務', value=f'{_unassigned:,}', unit='筆', tone='bad' if _unassigned else 'good',
@@ -3268,15 +3269,16 @@ if "last_result" in st.session_state:
                 _daily_summary.insert(1, '星期', [['一','二','三','四','五','六','日'][d.weekday()] for d in _daily_summary.index])
 
         def _row_tone(row, col, warn_at=None, bad_at=0):
-            """表格整列上色：超過 bad_at 紅底粗體、超過 warn_at 琥珀底（Styler 只認得色碼，色碼同 WARM_CSS 的 --cf-red／--cf-amber-soft）。"""
+            """只替重點那一格上色（不再整列紅底）：超過 bad_at 紅底紅字、超過 warn_at 琥珀底；其他欄維持原樣。
+            Styler 只認得色碼，色碼同 WARM_CSS 的 --cf-red-soft／--cf-red-ink、--cf-amber-soft／--cf-amber-ink。"""
             v = pd.to_numeric(row.get(col), errors='coerce')
             if pd.notna(v) and v > bad_at:
-                css = 'background-color:#FDECEA;color:#8A1C12;font-weight:800'
+                css = 'background-color:#FDECEA;color:#912018;font-weight:800'
             elif warn_at is not None and pd.notna(v) and v >= warn_at:
-                css = 'background-color:#FFF4E5;color:#7A3E06;font-weight:700'
+                css = 'background-color:#FFF6E8;color:#92400E;font-weight:700'
             else:
                 css = ''
-            return [css] * len(row)
+            return [css if name == col else '' for name in row.index]
 
         def _body_unassigned():
             _issue_go_button('review_go_issues', primary=False)
@@ -3284,7 +3286,7 @@ if "last_result" in st.session_state:
                 _ds = _daily_summary.reset_index(drop=True)
                 _bad_days = _ds[_ds['未派'] > 0]
                 _d1, _d2 = st.columns([3, 1.2], vertical_alignment='center')
-                _d1.markdown(f"**🔴 有未派的日子：{len(_bad_days)} 天**（紅底）" if len(_bad_days) else '**✅ 每一天都排滿了**')
+                _d1.markdown(f"**🔴 有未派的日子：{len(_bad_days)} 天**（「未派」那一格標紅）" if len(_bad_days) else '**✅ 每一天都排滿了**')
                 _show_all = _d2.toggle('顯示全部日期', key='cf_daily_all', value=_bad_days.empty)
                 _view = _ds if _show_all else _bad_days
                 # 只有日期與數字、沒有姓名，直接用 st.dataframe 才能套 Styler 上色
@@ -3337,7 +3339,8 @@ if "last_result" in st.session_state:
             if not _hours_table.empty:
                 _top = _hours_table.iloc[0]
                 kpi_cards([
-                    dict(label='加班用最多', value=f"{_top['加班使用率']:.0f}%", unit='', tone='warn' if _top['加班使用率'] >= 80 else 'good',
+                    dict(label='加班用最多', value=f"{_top['加班使用率']:.0f}%", unit='', ring=_top['加班使用率'],
+                         tone='bad' if _top['加班使用率'] > 100 else 'warn' if _top['加班使用率'] >= 80 else 'good',
                          sub=f"{caregiver_label(str(_top['居服員ID']))}　月加班 {_top['月加班']:.1f}／{max_monthly_ot:g} 小時"),
                     dict(label='接近上限（80% 以上）', value=f'{_near_n}', unit='人', tone='warn' if _near_n else 'good'),
                     dict(label='超過上限', value=f'{_hours_bad}', unit='項', tone='bad' if _hours_bad else 'good'),
@@ -4983,7 +4986,7 @@ if "last_result" in st.session_state:
                 _info, _reset = st.columns([3, 1], vertical_alignment='center')
                 _info.info('示範日（' + '、'.join(_need_days) + '）已登錄的請假：'
                            + '、'.join(f"{caregiver_label(str(b['cg']))} {str(b['start'])[:10]}" for b in _demo_blocks)
-                           + '。要重新示範，請按右邊「重設」：撤銷這些請假，並把這兩天的服務全部還給原居服員。')
+                           + '。要重新示範，請按右邊「重設」：撤銷這些請假，並把這幾天的服務全部還給原居服員。')
                 if _reset.button('🔄 重設示範情境', key='leave_sc_reset', width='stretch'):
                     _workers = {str(b['cg']) for b in _demo_blocks}
                     for _b in _demo_blocks:
@@ -6458,7 +6461,7 @@ if "last_result" in st.session_state:
                 st.info('這個月沒有已派的服務。')
                 return
             _over = int((_summary['超額自費'] > 0).sum())
-            kpi_cards([
+            stat_strip([
                 dict(label='服務案家', value=f'{len(_summary):,}', unit='案', tone='good'),
                 dict(label='政府補助（申報）', value=f"{int(_summary['政府補助（申報）'].sum()):,}", unit='元', tone='good'),
                 dict(label='案家自付合計', value=f"{int(_summary['案家應付合計'].sum()):,}", unit='元', tone='good'),
@@ -6882,9 +6885,10 @@ if "last_result" in st.session_state:
                 st.info('今天還沒有發布班表。按最上面「① 發布班表」，居服員手機上就會看到今天的班。')
                 return
             _count = _board['狀態'].value_counts()
-            kpi_cards([
+            _started = int(_count.get('服務中', 0) + _count.get('已完成', 0))
+            stat_strip([
                 dict(label='今日班數', value=f'{len(_board):,}', unit='筆', tone='good'),
-                dict(label='已上班／已完成', value=f"{int(_count.get('服務中', 0) + _count.get('已完成', 0)):,}", unit='筆',
+                dict(label='已上班／已完成', value=f'{_started:,}', unit='筆', ring=_started / len(_board) * 100,
                      sub=f"已完成 {int(_count.get('已完成', 0)):,} 筆", tone='good'),
                 dict(label='逾時未打卡', value=f"{int(_count.get('逾時未打卡', 0)):,}", unit='筆',
                      sub=f'過了開始時間 {_overdue:g} 分鐘', tone='bad' if _count.get('逾時未打卡') else 'good'),
@@ -6933,8 +6937,9 @@ if "last_result" in st.session_state:
             if _punches.empty:
                 st.info('這段期間還沒有任何打卡紀錄。居服員開始用手機打卡後，這裡會列出遲到、漏打卡與未遇。')
             _sum = _att.summary(_result)
-            kpi_cards([
-                dict(label='應對照', value=f"{_sum['應對照']:,}", unit='筆', sub=f"正常 {_sum['正常']:,} 筆", tone='good'),
+            stat_strip([
+                dict(label='應對照', value=f"{_sum['應對照']:,}", unit='筆', sub=f"正常 {_sum['正常']:,} 筆", tone='good',
+                     ring=(_sum['正常'] / _sum['應對照'] * 100 if _sum['應對照'] else None)),
                 dict(label='遲到', value=f"{_sum['遲到']:,}", unit='筆',
                      sub='準時率 ' + (f"{_sum['準時率']:.1f}%" if _sum['準時率'] is not None else '—'),
                      tone='warn' if _sum['遲到'] else 'good'),

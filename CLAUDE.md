@@ -139,7 +139,7 @@ All dispatch-policy coefficients named above live in the `PipelineConfig` datacl
   - 模組頁首：`module_header(key)`（編號＋名稱＋本頁任務＋使用者角色徽章；角色來自 `MODULES` 第 5 欄「居督／主管」）。
   - 頁內小節：`subhead(text)`（`app.py` 用了 24 次）；`st.subheader` 只剩 2 處舊程式；細項小標用 `st.markdown('##### …')`。
 - **卡片類 helper**（全部在 `careflow_ui.py`，HTML 一律經 `_e()`（`html.escape`）跳脫）：
-  - 數字：`kpi_cards(items)`（tone：good／warn／bad／ai）、`impact_cards(items, cols)`、`result_hero(...)`
+  - 數字：`kpi_cards(items)`（tone：good／warn／bad／ai）、`impact_cards(items, cols)`（淡底色＋圖示圓章，item 可帶 tone／icon／ring）、`stat_strip(items)`（同一組數字放進一張大卡分格，④ 的打卡看板、執行對照、CSMS 試算用）、`result_hero(...)`；三者的 item 都可帶 `ring`（0～100，`ring_html()` 畫小圓環，只用在比例類數字）
   - 狀態：`ready_cards(items)`、`conn_card(title, detail, latency, tone)`、`import_card(number, title)` → `(容器, set_head)`
   - 流程：`run_card_html()`、`run_steps_markdown()`、`signoff_head_html()`、`family_heading(n)`
   - 登入：`auth_card(mode)`（login／setup；回傳送出的欄位與訊息容器，驗證由 app.py 呼叫 `auth`）
@@ -181,6 +181,7 @@ All dispatch-policy coefficients named above live in the `PipelineConfig` datacl
   - 唯讀表格一律用 `app.py › show_table(data, hide_index=True, width='stretch', column_config=...)`，不直接呼叫 `st.dataframe`（它會依個資設定套用 `identity_display`）；`app.py` 有 57 處 `show_table`，直接用 `st.dataframe` 只有 1 處。
   - 可編輯表格用 `st.data_editor`（`app.py › render_editable_sheet()`）。
   - 長文字欄位用 `st.column_config.TextColumn(width='large')`。
+  - 對齊：`careflow_ui.py › uniform_table_alignment()`（由 `inject_css` 呼叫）包住 `st.dataframe`／`st.data_editor`，沒指定 `alignment` 的欄一律 `TABLE_ALIGN = 'left'`，數字欄不再靠右。需要 Streamlit 1.56 以上。
 - **HTML 元件的 CSS 一律放在 `careflow_ui.py`**。例：`week_board.py` 只輸出 `cf-wk-*` class，樣式在 `careflow_ui.py`。`calendar_view.py › _GRID_CSS` 是舊有例外，不要再增加新的例外。居服員手機打卡頁（`checkin/templates/base.html`）是另一個 Flask 網頁、讀不到 `careflow_ui.py`，CSS 寫在模板裡，但變數名稱與色碼照抄 `WARM_CSS` 的 `--cf-*`，字級同樣用 `calc(px * var(--cf-s))`。
 
 #### 4. 用語

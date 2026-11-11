@@ -287,8 +287,9 @@ def _interactive_grid(days, shown, labels, person_mode, today, max_exceptions, o
                     adjusted = [r for r in day_rows if r.get('cg') and r.get('tag') in ('代班', '已調整')]
                     done = len(day_rows) - len(missing)
                     workers = len({r['cg'] for r in day_rows if r.get('cg')})
-                    with st.container(key=f'cfwkday_{d}'):
-                        st.button(f'**{done}**／{len(day_rows)}\n\n已排 · 👥 {workers} 人\n\n看當天班表 ›', key=f'cfwk_day_{d}',
+                    with st.container(key=f'cfwkday_{"ok" if not missing else "miss"}_{d}'):
+                        # 大字是「服務筆數」（已排／全部），不是人數；人數另寫「位居服員上班」，和當天班表視窗同一說法。
+                        st.button(f'**{done}**／{len(day_rows)} 筆\n\n服務已排 · 👥 {workers} 位居服員\n\n看當天班表 ›', key=f'cfwk_day_{d}',
                                   on_click=_open_day, args=(d,), width='stretch', help='點開看這一天每位居服員的完整班表')
                     st.markdown(_busy_html(day_rows), unsafe_allow_html=True)
                     notable = (missing + adjusted)[:max_exceptions]
