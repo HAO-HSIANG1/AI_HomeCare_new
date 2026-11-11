@@ -47,9 +47,10 @@ def test_review_page_publishes_today_and_shows_board(tmp_path, monkeypatch):
     app.button(key='cfnav_review').click().run()
     assert not app.exception, [e.message for e in app.exception]
     page = ' '.join(m.value for m in app.markdown)
-    assert '居服員打卡' in page and '執行對照（排班 vs 打卡）' in page
-    assert page.index('① 發布班表') < page.index('② 今日打卡看板') < page.index('③ 打卡網址、手機綁定與補登覆核')
-    app.button(key='cf_checkin_view__tab0').click().run()                       # ③ 打卡網址
+    assert '居服員打卡' in page and '③ 打卡看板' in page
+    # 新順序：① 發布 → ② 打卡網址／手機綁定／補登 → ③ 打卡看板（今天／整段期間對照分頁）
+    assert page.index('① 發布班表') < page.index('② 打卡網址、手機綁定與補登覆核') < page.index('③ 打卡看板')
+    app.button(key='cf_checkin_view__tab0').click().run()                       # ② 打卡網址
     assert not app.exception, [e.message for e in app.exception]
     app.button(key='checkin_publish_today').click().run()                       # ① 發布班表（不在分頁裡）
     assert not app.exception, [e.message for e in app.exception]
@@ -57,5 +58,5 @@ def test_review_page_publishes_today_and_shows_board(tmp_path, monkeypatch):
     assert store.shifts_for('A', date(2026, 11, 2)) or store.shifts_for('B', date(2026, 11, 2))
     raw = ' '.join(str(v) for row in store.connect().execute('SELECT * FROM shifts') for v in row)
     assert '小明' not in raw                                                    # 只存遮罩姓名
-    assert not app.exception, [e.message for e in app.exception]                 # ② 今日看板直接顯示在發布下方
+    assert not app.exception, [e.message for e in app.exception]                 # ③ 打卡看板預設「今天」
     assert any('逾時未打卡' in ' '.join(map(str, df.value['狀態'])) for df in app.dataframe if '狀態' in df.value)

@@ -25,12 +25,13 @@ The project is a git repository (branch `develop`) with a pytest suite under `te
 - `osrm_client.py`, `traffic_wake.py` — OSRM connection and wake-up of the hosted routing server; `osrm_motorcycle/` builds the motorcycle road network.
 - `build_info.py` — `CAREFLOW_BUILD` / `REQUIRED_MODULES`; `app.py` refuses to start if a listed module carries a different build marker.
 - `ai_caregiver_pipeline.py` — legacy thin CLI entry point for the original single-day pipeline.
+- Ported from AI_HomeCare_Atrust (2026-11-09, see `PORTING_PLAN.md` 第四階段), all pure modules: `plan_versions.py` (dated weekly-plan changes, written back to the workbook's 到期日／生效日), `undo_stack.py` (「↩️ 復原上一步」, 10 steps, `STATE_KEYS`／`RES_KEYS` must cover any new state-changing action), `billing.py` (CSMS claim export + co-payment estimate, columns in `CLAIM_COLUMNS`), `change_log.py` (merged change log in ④), `error_log.py` (error file log + per-session list).
 
 ### Streamlit app (`app.py`)
 
-- **Login first.** Unless `CAREFLOW_AUTH=0`, nothing but the header and the login card (`careflow_ui.auth_card`) is drawn until `st.session_state['auth_user']` is set; with no accounts yet, the card creates the first 主管. The user is re-read from `auth.current_user()` on every rerun, so disabling an account logs it out. Roles: 主管 = everything incl. the manager report and 帳號管理; 居督 = steps ①～④.
+- **Login first.** Unless `CAREFLOW_AUTH=0`, nothing but the header and the login card (`careflow_ui.auth_card`) is drawn until `st.session_state['auth_user']` is set; with no accounts yet, the card creates the first 主管. Otherwise the entry page has 登入／註冊新帳號／忘記密碼 (`segmented_control` key `cf_auth_view`): sign-up and forgot-password only create requests (`auth.request_signup`／`request_reset`, table `requests`, password hashed on submit) that a 主管 approves in 👥 帳號管理 (`auth.decide_request`, role can be changed on approval; sidebar button shows the pending count). The only 主管 forgetting the password uses `python tools/reset_password.py 帳號` on the host. When the sidebar is collapsed the whole page scales ×1.12 (`--cf-s0`／`--cf-s` in `inject_css`). Fixed check-in URL, free and without installing anything: a Cloudflare Workers 「門牌」 (`checkin/runner.py › setup_gateway`／`_gateway_follow`, worker `homecare-checkin` on the user's free workers.dev subdomain, proxies to the current quick tunnel; the app re-uploads the worker with the new `TARGET` whenever the quick-tunnel URL changes and restarts a dead tunnel); own-domain alternative: Cloudflare named tunnel token (`save_named_tunnel`) in the 進階 toggle. The fixed-URL settings box is drawn only for 主管 (an expander, collapsed once configured); 居督 only see a one-line hint while no fixed URL is set. A floating 「＋ 臨時異動」 button (container `cffab`, key `cf_fab_temp`) opens a 3-step dialog (`_temp_change_dialog`, answers saved in `tcd_saved`) that prefills and opens ③ › 臨時異動 (leave is registered immediately and auto-cover starts). The assignment dialog (`calendar_view._assignment_dialog`) checks candidates automatically and lists 「⭐ 推薦」 ones first. The user is re-read from `auth.current_user()` on every rerun, so disabling an account logs it out. Roles: 主管 = everything incl. the manager report and 帳號管理; 居督 = steps ①～④.
 - **Navigation.** The top stepper (`render_stepper`) is the only way to change pages: ① 匯入資料 → ② 開始排班 → ③ 處理問題 → ④ 確認班表, plus 📊 主管報表 on the right. Locks (missing data, missing schedule, role) are computed only in `_flow_locks()`. 👥 帳號管理 (`M_ACCOUNTS`) is opened from the sidebar by managers, renders and then `st.stop()`s before any data loading.
-- **Check-in.** `app.py` starts the check-in server once per process (`_start_checkin_server`, `st.cache_resource`) before the login gate; `CAREFLOW_CHECKIN_AUTOSTART=0` disables it (docker-compose runs it as the separate `checkin` service). ④ has 「📱 居服員打卡」 (in order: ① 發布班表 with the demo-shift expander, ② 今日打卡看板 fragment, ③ `big_tabs` key `cf_checkin_view`: 打卡網址／手機綁定／補登覆核) and 「執行對照（排班 vs 打卡）」 (details in a collapsed expander) between 「更新機構 Excel」 and 「人工覆寫紀錄」. Supervisor actions write audit event `checkin`.
+- **Check-in.** `app.py` starts the check-in server once per process (`_start_checkin_server`, `st.cache_resource`) before the login gate; `CAREFLOW_CHECKIN_AUTOSTART=0` disables it (docker-compose runs it as the separate `checkin` service). ④ has 「📱 居服員打卡」 in order: ① 發布班表 with the demo-shift expander, ② `big_tabs` key `cf_checkin_view`: 打卡網址／手機綁定／補登覆核, ③ 打卡看板 `big_tabs` key `cf_attend_view`: 今天 (`_checkin_board` fragment) ／整段期間對照 (`_attendance_view`, default range ends yesterday). The 05 manager report's three headline cards (`manager_report.headline_cards(summary, …)`) are all computed from the schedule (排班完成率、固定人選服務比例、轉場佔總工時) — no assumed numbers; appendix numbers use `careflow_ui.stat_cards`. Supervisor actions write audit event `checkin`.
 - **Pilot KPI.** 05 starts with `big_tabs(['主管報表', '試辦 KPI'], 'cf_analytics_view')`; the KPI view calls `kpi_view.render_pilot_kpis` with app.py's `show_table`／`export_frame`／`download_button_quiet` and the schedule frames plus `_pending_diagnostics`, `res['df_cg']` and the period. Layout: one `kpi_cards` row per group, then the item table, then per-item expanders. Demo mode writes to `kpi_metrics.demo_db_path()` next to the demo store. Saves write audit event `kpi`.
 - **Sidebar** holds status only: account (logout, change own password), data/routing status, ⚙️ 排班規則設定, 🎬 示範模式, 🔒 個資顯示設定.
 - Scheduling runs only when the run button is clicked (`_request_run` → `_run_requested`); results are kept in `st.session_state['last_result']` and autosaved by `session_store`. Editing data or rules clears the old schedule and marks `_result_stale`.
@@ -110,14 +111,15 @@ All dispatch-policy coefficients named above live in the `PipelineConfig` datacl
 
 #### 1. 字級與對比（方案 C「暖心大字」）
 
-- **全站樣式只從一個入口注入**：`careflow_ui.py › inject_css(scale)`，依序疊四層 `CSS + DESIGN_CSS + WARM_CSS + FIX_CSS`，最後再補一行 `:root{--cf-s:<倍率>}`。每次重跑都要注入（由 `render_header()` 呼叫）。
+- **全站樣式只從一個入口注入**：`careflow_ui.py › inject_css(scale)`，依序疊五層 `CSS + DESIGN_CSS + WARM_CSS + FIX_CSS + TIDY_CSS`，最後再補一行 `:root{--cf-s:<倍率>}`。每次重跑都要注入（由 `render_header()` 呼叫）。
+  - `TIDY_CSS`（2026-11-09）是版面精簡層：主內容最寬 1720px、頁首白卡 `st-key-cf_topbar`、登入頁雙欄 `cf-auth-side`、週班表可點按鈕與「當天班表」視窗（`cfwk*`、`cf-dd-*`）。新加的樣式放這層。
   - `WARM_CSS` 是目前生效的配色與字級層；`DESIGN_CSS`（v2026.11 翡翠綠）與最前面的 `CSS`（舊版）已被覆寫，只是保留。
   - `FIX_CSS` 必須最後注入：統一按鈕所有狀態（hover／active／focus／disabled）的底色與字色、取消重跑時的淡化、讓出 Streamlit 頂部固定列。
 - **字級一律寫成 `calc(基準px * var(--cf-s))`**，不寫死 px。例：`WARM_CSS` 內文 `calc(19px * var(--cf-s))`、說明文字 17px、元件標籤 18px（粗體）、h1～h3 為 34／28／24px。
 - **字級切換機制**：
-  - 倍率表：`careflow_ui.py › FONT_SCALES = {'標準': 1.0, '大': 1.12, '特大': 1.25}`。
-  - session_state key：`cf_font_scale`，預設 `'大'`（`app.py › _SETTING_DEFAULTS`），列在 `_PERSISTED_KEYS`，換頁會保留。
-  - 頁首右側：`app.py` 用 `st.segmented_control('字體大小', list(FONT_SCALES), key='cf_font_scale')`，換算後傳給 `render_header(..., scale=_font_scale)`。
+  - 倍率表：`careflow_ui.py › FONT_SCALES = {'標準': 0.86, '大': 0.96, '特大': 1.08}`（2026-11-09 整體下修一號）。
+  - session_state key：`cf_font_scale`，預設 `'標準'`（`app.py › _SETTING_DEFAULTS`），列在 `_PERSISTED_KEYS`，換頁會保留。
+  - 頁首右側：`app.py` 在 `st.container(key='cf_topbar')` 裡用兩欄，左邊 `render_header(..., scale=_font_scale, font_label=True)`，右邊 `st.segmented_control('字體大小', ..., key='cf_font_scale', label_visibility='collapsed')`，CSS 把兩欄合成同一張白卡。
 - **對比規範**（寫在 `careflow_ui.py` 的 `WARM_CSS` 註解）：主要文字 `--cf-ink #2B2622`、次要 `--cf-muted #6B5E52`，白底對比都 ≥ 4.5:1；鍵盤焦點 `:focus-visible` 為 3px 主色外框。
 
 #### 2. 顏色、卡片、標題、警示
@@ -244,7 +246,7 @@ All dispatch-policy coefficients named above live in the `PipelineConfig` datacl
 - **機密**：`.streamlit/secrets.toml`（不進 git，範本是 `.streamlit/secrets.toml.example`）。讀取順序是**環境變數優先，再讀 `st.secrets`**，例如 `caregiver_engine.py` 讀 `GOOGLE_MAPS_API_KEY`、`app.py` 讀 `CAREFLOW_OSRM_MOTORCYCLE_HOST`，都包在 `try/except`。
 - **環境變數命名**：專案自己的設定一律 `CAREFLOW_` 前綴＋大寫底線，例如 `CAREFLOW_CACHE_DIR`、`CAREFLOW_AGENCY_DIR`、`CAREFLOW_ROAD_CACHE_DAYS`、`CAREFLOW_TRANSIT_CACHE_DAYS`、`CAREFLOW_OSRM_MAP_VERSION`、`CAREFLOW_TRAVEL_PROVIDER`；第三方金鑰沿用官方名稱（`GOOGLE_MAPS_API_KEY`）。
   - 登入相關：`CAREFLOW_AUTH`（`0`／`off`／`false`／`no` 關閉）、`CAREFLOW_ACCOUNTS_DB`、`CAREFLOW_AUDIT_DIR`（`auth.py › enabled()`／`db_path()`、`audit_log.py › audit_dir()`）。
-  - 打卡相關：`CAREFLOW_CHECKIN_AUTOSTART`、`CAREFLOW_CHECKIN_PUBLIC_URL`、`CAREFLOW_CHECKIN_TUNNEL`（沒有固定網址時預設自動開外部網址，`0` 關閉）、`CAREFLOW_CHECKIN_PORT`、`CAREFLOW_CHECKIN_DB`、`CAREFLOW_CHECKIN_SECURE`、`CAREFLOW_CHECKIN_SECRET`（`checkin/runner.py`、`checkin/store.py`、`checkin/server.py`）。打卡容許值（遲到、早退、逾時、GPS 半徑）是派單政策參數，放在 `PipelineConfig.attendance_*`。
+  - 打卡相關：`CAREFLOW_CHECKIN_AUTOSTART`、`CAREFLOW_CHECKIN_PUBLIC_URL`、`CAREFLOW_CHECKIN_TUNNEL`（沒有固定網址時預設自動開外部網址，`0` 關閉）、`CAREFLOW_CHECKIN_TUNNEL_TOKEN`（Cloudflare 具名通道權杖，搭配 `CAREFLOW_CHECKIN_PUBLIC_URL`）、`CAREFLOW_KEEP_AWAKE`（Windows 防休眠，`0` 關閉）；免網域的固定網址用 Tailscale Funnel（`checkin/runner.py › start_funnel`／`funnel_state`，④ 打卡網址分頁的「📌 固定網址」）、`CAREFLOW_CHECKIN_PORT`、`CAREFLOW_CHECKIN_DB`、`CAREFLOW_CHECKIN_SECURE`、`CAREFLOW_CHECKIN_SECRET`（`checkin/runner.py`、`checkin/store.py`、`checkin/server.py`）。打卡容許值（遲到、早退、逾時、GPS 半徑）是派單政策參數，放在 `PipelineConfig.attendance_*`。
   - 試辦 KPI：`CAREFLOW_KPI_DB`（`kpi_metrics.py › db_path()`）。
   - 每個讀取點都要有預設值：`os.getenv('CAREFLOW_ROAD_CACHE_DAYS','30')`。
   - 路徑類變數讓測試可以導到暫存資料夾（`tests/conftest.py` 設定 `CAREFLOW_CACHE_DIR`）。
@@ -276,8 +278,9 @@ All dispatch-policy coefficients named above live in the `PipelineConfig` datacl
   - 帳號一律由呼叫端傳入（`account=_user['username']`），模組本身不讀畫面狀態。
   - 事件代碼先加進 `audit_log.EVENTS`。detail 只放 ID 與筆數，欄名含 name、姓名、地址的會被濾掉，所以帳號代碼請用 `target`，不要用 `username`。
   - 寫入失敗只回傳 False，不影響登入與排班。
-  - 目前記錄的事件：login、login_failed、logout、account（create_first_manager／create／reset_password／disable／enable／change_own_password）、checkin（publish／device_approve／device_reject／device_revoke／review／set_url／auto_bind／tunnel）、kpi（save_month）。
-- **log**：沒有 logging 框架。只有引擎在外部服務退回估算時 `print('[OSRM Warning] …')`（`caregiver_engine.py`）。需要留存的操作紀錄寫成資料：居督覆寫寫進 `output_results/supervisor_override_log.csv`（`caregiver_engine.py › save_override_log`／`load_override_log`）、請假歷程寫進 `WorkflowStore` 的 `history` 表。
+  - 目前記錄的事件：login、login_failed、logout、account（create_first_manager／create／reset_password／disable／enable／change_own_password）、checkin（publish／device_approve／device_reject／device_revoke／review／set_url／auto_bind／tunnel）、kpi（save_month）、undo（復原上一步）、plan_change（週計畫異動）、export（更新機構 Excel）。
+- **錯誤紀錄**：畫面層的 `except Exception as exc:` 在顯示白話訊息前先呼叫 `app.py › _log_error('功能名稱', exc)`（轉呼叫 `error_log.log_error(where, exc, st.session_state)`），完整追蹤寫進 `output_results/logs/careflow_errors.log`（`CAREFLOW_LOG_DIR` 可改），側邊欄「⚠️ 進階：本次有 N 個系統錯誤」可看代碼、下載紀錄檔。
+- **log**：除了上面的錯誤紀錄，沒有其他 logging。只有引擎在外部服務退回估算時 `print('[OSRM Warning] …')`（`caregiver_engine.py`）。需要留存的操作紀錄寫成資料：居督覆寫寫進 `output_results/supervisor_override_log.csv`（`caregiver_engine.py › save_override_log`／`load_override_log`）、請假歷程寫進 `WorkflowStore` 的 `history` 表。
 
 #### 4. 個資遮罩（姓名 → 王○○）
 

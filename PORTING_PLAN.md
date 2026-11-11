@@ -414,3 +414,30 @@ C3-1（和主管報表的數字不同）：K1 和主管報表「服務完成率�
 - 失敗與收集錯誤共 26 項，**和移植前完全相同**（逐項比對）：沒有新的失敗，原本的也沒有變好或變壞。
 
 **通過的 67 個**來自不需要 streamlit 的檔案：`test_v14`、`test_v16`、`test_v17`、`test_v15`／`test_v18` 的其餘部分、`test_dashboard_and_cache`、`tests/test_demo_mode`、`tests/test_import_health`、`tests/test_issue_center`、`tests/test_source_workbook`（其餘 2 個）、`tests/test_substitute_rank`。
+
+---
+
+## 第四階段：介面精簡＋原本跳過的五項功能（2026-11-09）
+
+原本 0.3 列為「不要」的五項，這次依需求全部移植；邏輯照搬純函式模組，畫面依本專案風格重寫。
+
+| 功能 | 檔案 | 畫面位置 |
+|---|---|---|
+| 週計畫異動（有生效日） | `plan_versions.py`（純函式） | ③ 處理問題 › 臨時異動 › 🕒 案家臨時改期 › `big_tabs` `cf_resched_mode`「從某天起都改」；④ 更新機構 Excel 會寫回異動後版本 |
+| 復原上一步 | `undo_stack.py`（純函式） | 側邊欄「目前狀態」`cf_undo_last`；`app.py` 自動存檔後呼叫 `_undo.track()`；稽核事件 `undo` |
+| CSMS 申報與自付額試算 | `billing.py`（純函式） | ④ 確認班表 › 📑 CSMS 申報與自付額試算（`cf_billing_*`），打卡「未遇」不計費 |
+| 異動紀錄（合併表） | `change_log.py`（純函式） | ④ 確認班表 › 異動紀錄（主管可勾選系統稽核）；原本的分頁移到下方「各類原始紀錄」 |
+| 錯誤紀錄 | `error_log.py`（不 import streamlit） | `app.py › _log_error(where, exc)`；畫面照舊顯示白話訊息，另寫 `output_results/logs/careflow_errors.log`；側邊欄「⚠️ 進階：本次有 N 個系統錯誤」 |
+
+另外移植：② 週班表可點（`week_board.render_week_board(on_open=...)`）——每天「已排」數字點開「當天班表」視窗，未排／代班的服務點了開啟與拖曳日曆相同的「安排居服員」視窗。
+
+介面精簡（`careflow_ui.py › TIDY_CSS`，最後注入）：
+- `FONT_SCALES` 改為 `{'標準': 0.86, '大': 0.96, '特大': 1.08}`，預設 `'標準'`（整體小一號）。
+- 主內容最寬 1720px、左右留白隨視窗縮放。
+- 頁首與字體大小合成一條白卡（`st.container(key='cf_topbar')`，`render_header(..., font_label=True)`）。
+- 登入／第一次使用頁改成「左說明、右表單」雙欄。
+
+稽核事件新增：`undo`、`plan_change`、`export`。`build_info.REQUIRED_MODULES` 加入五個新模組；`tests/conftest.py` 加 `CAREFLOW_LOG_DIR`。
+
+測試：新增 `tests/test_plan_change_ui.py`（整頁）、`test_plan_versions.py`、`test_undo.py`、`test_billing.py`、`test_change_log.py`、`test_error_log.py`。
+全套 `pytest tests`：移植前 103 failed／135 passed，移植後 103 failed／160 passed，失敗清單完全相同（沒有新增失敗）。

@@ -15,28 +15,33 @@ STATUS_COLORS = {'正常': '#1F5F7A', '接近上限': '#B45309', '超過上限':
 
 
 # ---------------------------------------------------------------- 三大數字
-def headline_cards(manual_hours, ai_minutes, travel_cut_pct, travel_hours, days, total, assigned, run_seconds=None):
-    """回傳三張大數字卡（dict：title, number, before, after, note, ai）。"""
-    manual_hours, ai_minutes = float(manual_hours), float(ai_minutes)
-    cut = float(travel_cut_pct) / 100.0
-    saved = max(0.0, manual_hours - ai_minutes / 60.0)
-    eff = max(0.0, 1 - ai_minutes / (manual_hours * 60)) if manual_hours > 0 else 0.0
-    days = max(1, int(days or 1))
-    travel_month = float(travel_hours or 0) * 30.0 / days
-    saved_month = travel_month * cut / (1 - cut) if 0 <= cut < 1 else 0.0   # 人工基準轉場 − AI 轉場
+def headline_cards(summary, travel_hours=None, total_hours=None, avg_leg_minutes=None, run_seconds=None):
+    """回傳三張大數字卡（dict：title, number, before, after, note, ai），全部由這次班表實際算出、沒有假設值。
+
+    summary：dashboard_metrics.build_dashboard()['summary']（total、assigned、owned、primary、primary_share、travel_share）。
+    1. 排班完成率＝已派筆數 ÷ 全部服務筆數（是「排進班表」的比例；實際有沒有到勤看 ④ 打卡看板）。
+    2. 固定人選服務比例＝由固定居服員本人服務的筆數 ÷ 有固定居服員的已派筆數（照顧連續性）。
+    3. 轉場佔總工時＝轉場工時 ÷（服務＋轉場）工時（路線效率，越低越好）。"""
+    s = summary or {}
+    total, assigned = int(s.get('total') or 0), int(s.get('assigned') or 0)
     rate = (assigned / total * 100) if total else 0.0
-    ran = f'{run_seconds:.1f} 秒' if run_seconds else '（尚未記錄）'
+    ran = f'本次 AI 排班 {run_seconds:.0f} 秒。' if run_seconds else ''
+    share = s.get('primary_share')
+    share_ok = share is not None and share == share
+    travel = s.get('travel_share')
+    travel_ok = travel is not None and travel == travel
+    leg = f'平均每段 {avg_leg_minutes:.0f} 分鐘；' if avg_leg_minutes else ''
     return [
-        dict(title='省下的排班工時', number=f'{saved:,.1f} 小時', ai=True,
-             before=f'人工 {manual_hours:g} 小時', after=f'AI {ai_minutes:g} 分鐘',
-             note=f'每次排班效率提升 {eff * 100:.0f}%；本次 AI 實際運算 {ran}，AI 時間含居督覆核。'),
-        dict(title='交通時間減少', number=f'{cut * 100:.1f}%',
-             before=f'每月省 {saved_month:,.0f} 小時', after='回流照顧服務',
-             note=f'本期 AI 班表轉場 {float(travel_hours or 0):,.1f} 小時（{days} 天）→ 每月約 {travel_month:,.0f} 小時。'),
-        dict(title='服務完成率', number=f'{rate:.1f}%',
+        dict(title='排班完成率', number=f'{rate:.1f}%', ai=True,
              before=f'已派 {assigned:,}／{total:,} 筆', after='',
-             note=('所有服務都已派出。' if total and assigned >= total
-                   else f'尚有 {total - assigned:,} 筆未派，可回到 ③ 處理問題。')),
+             note=ran + ('所有服務都已排進班表。' if total and assigned >= total
+                         else f'尚有 {total - assigned:,} 筆未派，可回到 ③ 處理問題。')),
+        dict(title='固定人選服務比例', number=(f'{share:.1f}%' if share_ok else '—'),
+             before=(f"固定居服員本人服務 {int(s.get('primary') or 0):,}／{int(s.get('owned') or 0):,} 筆" if share_ok else '沒有固定人選資料'),
+             after='', note='越高代表案家越少換人，照顧越連續。'),
+        dict(title='轉場佔總工時', number=(f'{travel * 100:.1f}%' if travel_ok else '—'),
+             before=(f'轉場 {float(travel_hours or 0):,.0f}／總工時 {float(total_hours or 0):,.0f} 小時' if travel_ok else '交通尚未計算'),
+             after='', note=leg + '越低代表路線越順、居服員花在路上的時間越少。'),
     ]
 
 

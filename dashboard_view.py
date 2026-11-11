@@ -12,20 +12,21 @@ def render_dashboard(D, caregiver_label=str, client_label=str, show_heat=True, t
     s = D['summary']
     if title:
         st.subheader(title)
-    st.caption('回答督導最常問的問題：哪裡派不出去、為什麼、誰太累、交通有沒有吃掉工時、哪些案家老是換人。'
-               '派單成功率與營收薪資請看上方 KPI。')
+    st.caption('回答居督最常問的問題：哪裡派不出去、為什麼、誰太累、交通有沒有吃掉工時、哪些案家老是換人。滑過 ⓘ 看算法。')
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric('固定人選服務比例', _pct(s['primary_share']),
-              help=f"已派且有固定居服員的 {s['owned']} 筆中，由固定人選本人服務 {s['primary']} 筆。越高代表客戶越少換人。")
-    c2.metric('請假代班／備援調度', f"{s['leave']} ／ {s['backup']} 筆",
-              help='請假代班：固定人選當天請假而由別人接。備援調度：固定人選排不進去（休息日、時段衝突、工時上限…）而由備援接。')
-    c3.metric('平均每人每日工時', '—' if pd.isna(s['avg_day_hours']) else f"{s['avg_day_hours']:.1f} 小時",
-              help='含轉場時間；有上班的日子才計入。')
-    c4.metric('接近加班上限', f"{s['near_limit_people']} ／ {s['people']} 人",
-              help='月加班時數已達上限 80% 以上（含排班期外已累積）。')
-    c5.metric('轉場佔總工時', '—' if pd.isna(s['travel_share']) else f"{s['travel_share'] * 100:.1f}%",
-              help='轉場工時 ÷ 總工時。越低代表路線越順。')
+    from careflow_ui import stat_cards
+    stat_cards([
+        dict(label='固定人選服務比例', value=_pct(s['primary_share']), tone='ok',
+             help=f"已派且有固定居服員的 {s['owned']} 筆中，由固定人選本人服務 {s['primary']} 筆。越高代表客戶越少換人。"),
+        dict(label='請假代班／備援調度', value=f"{s['leave']}／{s['backup']}", unit='筆', tone='primary',
+             help='請假代班：固定人選當天請假而由別人接。備援調度：固定人選排不進去（休息日、時段衝突、工時上限…）而由備援接。'),
+        dict(label='平均每人每日工時', value='—' if pd.isna(s['avg_day_hours']) else f"{s['avg_day_hours']:.1f}",
+             unit='' if pd.isna(s['avg_day_hours']) else '小時', tone='amber', help='含轉場時間；有上班的日子才計入。'),
+        dict(label='接近加班上限', value=f"{s['near_limit_people']}／{s['people']}", unit='人',
+             tone='red' if s['near_limit_people'] else 'ai', help='月加班時數已達上限 80% 以上（含排班期外已累積）。'),
+        dict(label='轉場佔總工時', value='—' if pd.isna(s['travel_share']) else f"{s['travel_share'] * 100:.1f}%",
+             tone='amber', help='轉場工時 ÷ 總工時。越低代表路線越順。'),
+    ], cols=5)
 
     tab_gap, tab_load, tab_travel, tab_stable = st.tabs(['什麼時候缺人', '人力負荷', '交通', '固定人選穩定度'])
 

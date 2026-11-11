@@ -224,3 +224,53 @@ def test_auth_off_skips_login(tmp_path, monkeypatch):
     assert not app.exception, [e.message for e in app.exception]
     assert app.button(key='cfnav_import')                              # 直接看到步驟列
     assert any('CAREFLOW_AUTH=0' in c.value for c in app.sidebar.caption)
+
+
+def test_signup_and_reset_requests_need_manager(tmp_path, monkeypatch):
+    """入口頁：註冊新帳號、忘記密碼都只是申請，主管核准後才生效；查無帳號的重設申請不洩漏、也不寫入。"""
+    monkeypatch.setattr(auth, 'PBKDF2_ROUNDS', 1000)
+    db = tmp_path / 'acc.sqlite3'
+    assert auth.create_first_manager('boss', '王主管', 'secret123', db) is None
+    assert auth.request_signup('amy01', '林居督', '主管', 'secret123', 'secret123', '北區', db) is None
+    assert '等主管核准' in auth.request_signup('amy01', '林居督', '居督', 'secret123', 'secret123', path=db)
+    assert '已經有人使用' in auth.request_signup('boss', '某人', '居督', 'secret123', 'secret123', path=db)
+    assert auth.verify('amy01', 'secret123', db)[0] is None                 # 還沒核准不能登入
+    assert auth.request_reset('nobody', '路人', 'newpass99', 'newpass99', db) is None   # 同樣回成功，不洩漏
+    assert auth.request_reset('boss', '別人的名字', 'newpass99', 'newpass99', db) is None
+    assert auth.request_reset('boss', '王主管', 'newpass99', 'newpass99', db) is None
+    pending = auth.pending_requests(db)
+    assert [(r['kind'], r['username']) for r in pending] == [('signup', 'amy01'), ('reset', 'boss')]
+    signup, reset = pending
+    info, problem = auth.decide_request(signup['id'], True, 'boss', role='居督', path=db)    # 申請主管、核准成居督
+    assert problem is None and info['role'] == '居督'
+    assert auth.verify('amy01', 'secret123', db)[0]['role'] == '居督'
+    assert auth.decide_request(reset['id'], True, 'boss', path=db)[1] is None
+    assert auth.verify('boss', 'newpass99', db)[0] is not None
+    assert auth.decide_request(reset['id'], False, 'boss', path=db)[1] == '這張申請已經處理過了。'
+    assert auth.pending_requests(db) == []
+
+
+def test_entry_page_signup_then_manager_approves(tmp_path, monkeypatch):
+    app = _app(tmp_path, monkeypatch)
+    assert auth.create_first_manager('boss', '王主管', 'secret123') is None
+    app.run()
+    app.segmented_control(key='cf_auth_view').set_value('註冊新帳號').run()
+    app.text_input(key='signup_user').input('amy01')
+    app.text_input(key='signup_name').input('林居督')
+    app.text_input(key='signup_pw1').input('secret123')
+    app.text_input(key='signup_pw2').input('secret123')
+    _submit(app, '送出註冊申請')
+    assert any('已送出申請' in s.value for s in app.success)
+    app.segmented_control(key='cf_auth_view').set_value('登入').run()
+    app.text_input(key='login_user').input('boss')
+    app.text_input(key='login_pw').input('secret123')
+    _submit(app, '登入')
+    assert app.button(key='auth_open_accounts').label == '👥 帳號管理（1）'
+    app.button(key='auth_open_accounts').click().run()
+    rid = auth.pending_requests()[0]['id']
+    app.button(key=f'acct_req_ok_{rid}').click().run()
+    assert not app.exception, [e.message for e in app.exception]
+    assert auth.verify('amy01', 'secret123')[0]['role'] == '居督'
+    import json
+    actions = [json.loads(e['detail']).get('action') for e in audit_log.entries() if e['event'] == 'account']
+    assert actions[-2:] == ['signup_request', 'signup_approve']

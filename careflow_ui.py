@@ -239,7 +239,9 @@ button[kind="segmented_controlActive"] p, [data-testid="stBaseButton-segmented_c
 </style>
 """
 
-FONT_SCALES = {'標準': 1.0, '大': 1.12, '特大': 1.25}
+# 2026.11 版面精簡：整體字級下修約 14%（原「標準」1.0 太大）；名稱不變，舊的設定值照樣能用。
+FONT_SCALES = {'標準': 0.86, '大': 0.96, '特大': 1.08}
+DEFAULT_FONT_SCALE = '標準'
 
 # 最後一層修正（必須放在所有樣式之後）：
 # 1. 按鈕所有狀態（hover／按下／focus／停用）都明確指定底色與字色——Streamlit 預設「按下」會把字變白、
@@ -340,14 +342,208 @@ button[kind="segmented_controlActive"]:hover, button[kind="segmented_controlActi
 """
 
 
-def inject_css(scale=1.12):
+# =====================================================================
+# 版面精簡層（2026.11 第三版，最後注入）
+#   1. 主內容放寬到 1720px，左右留白變少；大螢幕也不會只用中間一條
+#   2. 頁首＋字體大小合成同一條白卡（app.py 的 st.container(key='cf_topbar')）
+#   3. 登入頁改成「左說明、右表單」雙欄卡
+#   4. 步驟列、動作列高度下修，配合整體字級
+# =====================================================================
+TIDY_CSS = """
+<style>
+[data-testid="stMainBlockContainer"]{ max-width:1720px !important; padding-left:clamp(1rem, 2.4vw, 2.6rem) !important;
+  padding-right:clamp(1rem, 2.4vw, 2.6rem) !important; padding-top:calc(3.5rem + 10px) !important; }
+[data-testid="stMain"] p, [data-testid="stMain"] li, [data-testid="stMain"] [data-testid="stMarkdownContainer"]{ line-height:1.6; }
+
+/* 側邊欄收起來：舊版的 min-width:320px 會讓收起來的側邊欄還佔著位置，收起時改成 0，內容區放到最寬（字級在 inject_css 另外放大） */
+section[data-testid="stSidebar"][data-collapsed="true"]{ min-width:0 !important; }
+:root:has(section[data-testid="stSidebar"][data-collapsed="true"]) [data-testid="stMainBlockContainer"]{ max-width:1900px !important; }
+
+/* ---- 頁首一整條 ---- */
+.st-key-cf_topbar{ background:var(--cf-card); border:1px solid var(--cf-line); border-radius:18px; box-shadow:var(--cf-shadow);
+  padding:12px 22px !important; margin-bottom:6px; overflow:visible !important; height:auto !important; }
+.st-key-cf_topbar [data-testid="stMarkdownContainer"], .st-key-cf_topbar [data-testid="stMarkdown"]{ margin-bottom:0 !important; }
+/* 只放 <style> 的元素不要佔版面（樣式照樣生效） */
+.st-key-cf_topbar [data-testid="stElementContainer"]:has(style):not(:has(.cf-header)){ display:none; }
+.st-key-cf_topbar .cf-header{ background:transparent !important; border:0 !important; box-shadow:none !important; padding:0 !important; margin:0 !important;
+  display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px 18px; }
+.st-key-cf_topbar .cf-brand{ display:flex; align-items:center; gap:12px; }
+.st-key-cf_topbar .cf-brand b{ font-size:calc(24px * var(--cf-s)); line-height:1.25; }
+.st-key-cf_topbar .cf-brand span{ display:block; font-size:calc(15px * var(--cf-s)); }
+.st-key-cf_topbar .cf-header-status{ margin:0 !important; }
+.st-key-cf_topbar .cf-pill{ font-size:calc(15px * var(--cf-s)); padding:5px 13px; }
+.st-key-cf_topbar [data-testid="stElementContainer"]{ margin-bottom:0; }
+.st-key-cf_topbar [class*="st-key-cf_font_scale"]{ display:flex; flex-direction:row; align-items:center; justify-content:flex-end; gap:10px; }
+.st-key-cf_topbar [class*="st-key-cf_font_scale"] [data-testid="stWidgetLabel"]{ margin:0 !important; min-height:0; }
+.st-key-cf_topbar [class*="st-key-cf_font_scale"] [data-testid="stWidgetLabel"] p{ white-space:nowrap; }
+.st-key-cf_topbar .cf-header-status{ align-items:center; }
+.cf-font-label{ margin-left:14px; padding-left:16px; border-left:1px solid var(--cf-line); font-size:calc(15px * var(--cf-s)); color:var(--cf-muted); font-weight:700; white-space:nowrap; }
+[data-testid="stMain"] .cf-auth-side ul{ margin:0 !important; padding:0 !important; padding-inline-start:0 !important; }
+[data-testid="stMain"] .cf-auth-side li{ margin:0 !important; }
+.st-key-cf_topbar [class*="st-key-cf_font_scale"] button{ min-height:34px; padding:2px 14px; }
+.st-key-cf_topbar [class*="st-key-cf_font_scale"] button p{ font-size:calc(16px * var(--cf-s)) !important; }
+
+/* ---- 步驟列與底部動作列：稍微矮一點 ---- */
+[class*="st-key-cfstep_"] button{ min-height:calc(64px * var(--cf-s)) !important; border-radius:16px !important; }
+[class*="st-key-cfstep_"] button p{ font-size:calc(19px * var(--cf-s)) !important; }
+
+/* ---- 登入頁：左說明、右表單 ---- */
+.cf-auth-side{ background:linear-gradient(160deg,#1F5F7A 0%,#143F52 100%); color:#fff; border-radius:24px; padding:34px 36px 30px;
+  box-shadow:0 12px 32px rgba(20,63,82,.18); min-height:460px; display:flex; flex-direction:column; }
+.cf-auth-side .cf-logo{ width:52px; height:52px; }
+.cf-auth-side .cf-logo circle{ fill:#ffffff22; }
+.cf-auth-side small{ display:block; margin-top:14px; font-size:calc(15px * var(--cf-s)); letter-spacing:.06em; opacity:.85; }
+.cf-auth-side h2{ color:#fff !important; font-size:calc(30px * var(--cf-s)) !important; margin:6px 0 10px; padding:0; line-height:1.3; }
+[data-testid="stMain"] .cf-auth-side p{ color:#E3EEF3 !important; font-size:calc(17px * var(--cf-s)); margin:0 0 20px; }
+.cf-auth-side ul{ list-style:none; margin:0; padding:0; display:grid; gap:14px; }
+[data-testid="stMain"] .cf-auth-side li{ display:flex; gap:14px; align-items:flex-start; background:#ffffff14; border:1px solid #ffffff22;
+  border-radius:16px; padding:12px 16px; color:#fff; font-size:inherit; }
+.cf-auth-side li i{ font-style:normal; font-size:calc(22px * var(--cf-s)); line-height:1.3; }
+.cf-auth-side li b{ display:block; font-size:calc(17px * var(--cf-s)); color:#fff; }
+.cf-auth-side li span{ display:block; font-size:calc(15px * var(--cf-s)); color:#D6E6EE; line-height:1.5; }
+.cf-auth-side em{ margin-top:auto; padding-top:20px; font-style:normal; font-size:calc(15px * var(--cf-s)); color:#D6E6EE; }
+.cf-auth-head{ margin:0 0 12px; }
+.cf-auth-head b{ display:block; font-size:calc(30px * var(--cf-s)); color:var(--cf-ink); font-weight:900; line-height:1.3; }
+.cf-auth-head span{ display:block; margin-top:6px; font-size:calc(17px * var(--cf-s)); color:var(--cf-muted); line-height:1.6; }
+[data-testid="stMain"] [data-testid="stForm"]{ background:var(--cf-card); border:1px solid var(--cf-line); border-radius:20px; padding:22px 24px 20px; box-shadow:var(--cf-shadow); }
+@media (max-width:900px){ .cf-auth-side{ min-height:0; padding:24px 22px; } }
+/* ---- 03 收件匣卡片：原因最多兩行，按鈕不會疊到文字上 ---- */
+[class*="st-key-cfinbox_"] [data-testid="stMarkdownContainer"]{ margin-bottom:0 !important; }
+[class*="st-key-cfinbox_"] [data-testid="stElementContainer"]{ height:auto !important; }
+.cf-inbox-why{ display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; margin-bottom:4px; }
+.cf-inbox-now{ text-align:center; font-weight:800; color:var(--cf-primary-ink); font-size:calc(16px * var(--cf-s));
+  background:#FFFFFFAA; border-radius:10px; padding:6px 0; margin-top:4px; }
+
+.cf-why-card{ background:var(--cf-card); border:1px solid var(--cf-line); border-left:5px solid var(--cf-red); border-radius:16px; padding:14px 18px; margin:6px 0 10px; }
+.cf-why-card .t b{ font-size:calc(21px * var(--cf-s)); color:var(--cf-ink); margin-right:10px; }
+.cf-why-card .t span{ font-size:calc(15px * var(--cf-s)); color:var(--cf-muted); }
+.cf-why-card .r{ margin-top:8px; font-size:calc(17px * var(--cf-s)); color:var(--cf-text); line-height:1.6; }
+.cf-why-card .f{ margin-top:6px; font-size:calc(17px * var(--cf-s)); color:var(--cf-primary-ink); font-weight:700; }
+
+/* ---- 彩色數字卡 stat_cards（主管報表附錄、排班儀錶板） ---- */
+.cf-stats{ display:grid; gap:14px; margin:8px 0 14px; }
+.cf-stats.c3{ grid-template-columns:repeat(3,minmax(0,1fr)); } .cf-stats.c4{ grid-template-columns:repeat(4,minmax(0,1fr)); }
+.cf-stats.c5{ grid-template-columns:repeat(5,minmax(0,1fr)); }
+@media (max-width:1100px){ .cf-stats.c4, .cf-stats.c5{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:640px){ .cf-stats{ grid-template-columns:1fr !important; } }
+.cf-stat{ --c:var(--cf-primary); background:var(--cf-card); border:1px solid var(--cf-line); border-top:6px solid var(--c);
+  border-radius:18px; padding:14px 18px 16px; box-shadow:var(--cf-shadow); display:flex; flex-direction:column; gap:4px; min-width:0; }
+.cf-stat.ok{ --c:var(--cf-ok); } .cf-stat.amber{ --c:var(--cf-amber); } .cf-stat.ai{ --c:var(--cf-ai-1); } .cf-stat.red{ --c:var(--cf-red); }
+.cf-stat .lb{ font-size:calc(16px * var(--cf-s)); color:var(--cf-muted); font-weight:700; }
+.cf-stat .lb i{ font-style:normal; margin-left:6px; color:var(--cf-muted); cursor:help; }
+.cf-stat .v{ font-size:calc(38px * var(--cf-s)); font-weight:900; color:var(--c); line-height:1.15; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.cf-stat .v small{ font-size:calc(22px * var(--cf-s)); margin-left:6px; font-weight:800; }
+.cf-stat .sub{ font-size:calc(15px * var(--cf-s)); color:var(--cf-text); background:var(--cf-bg); border-radius:999px; padding:3px 12px; align-self:flex-start; }
+
+/* ---- 入口頁（登入／註冊新帳號／忘記密碼）：置中一張卡 ---- */
+.cf-acct-req{ font-size:calc(14px * var(--cf-s)); color:var(--cf-muted); }
+.cf-entry-brand{ display:flex; align-items:center; gap:14px; margin:28px 0 18px; }
+.cf-entry-brand .cf-logo{ width:52px; height:52px; flex:none; }
+.cf-entry-brand b{ display:block; font-size:calc(28px * var(--cf-s)); color:var(--cf-ink); font-weight:900; line-height:1.25; }
+.cf-entry-brand span{ display:block; font-size:calc(16px * var(--cf-s)); color:var(--cf-muted); }
+.cf-entry-title{ font-size:calc(24px * var(--cf-s)); font-weight:900; color:var(--cf-ink); margin:4px 0 4px; }
+.cf-entry-sub{ font-size:calc(16px * var(--cf-s)); color:var(--cf-muted); line-height:1.6; margin-bottom:10px; }
+.cf-entry-title{ margin-top:36px; }
+.st-key-cf_auth_view{ width:100% !important; }
+.st-key-cf_auth_view [data-testid="stButtonGroup"]{ width:100%; }
+.st-key-cf_auth_view [role="radiogroup"]{ display:grid !important; grid-template-columns:repeat(3,1fr); width:100%; }
+.st-key-cf_auth_view button{ min-height:46px; width:100%; }
+.st-key-cf_auth_view button p{ font-size:calc(17px * var(--cf-s)) !important; font-weight:800 !important; }
+.st-key-cf_auth_view button[aria-checked="true"]{ background:var(--cf-primary) !important; border-color:var(--cf-primary) !important; }
+.st-key-cf_auth_view button[aria-checked="true"] p{ color:#fff !important; }
+/* 還沒登入：側邊欄沒有內容，整個收掉 */
+body:has(.cf-entry-sub) section[data-testid="stSidebar"], body:has(.cf-entry-sub) [data-testid="stSidebarCollapsedControl"]{ display:none !important; }
+
+/* 安排居服員視窗：推薦人選一行 */
+.cf-pick-hint{ background:var(--cf-ok-soft); border:1px solid var(--cf-ok-line); color:var(--cf-ink); border-radius:12px;
+  padding:10px 14px; margin:4px 0 10px; font-size:calc(16px * var(--cf-s)); line-height:1.6; }
+
+/* ---- 右下角「＋ 臨時異動」按鈕與三步驟視窗 ---- */
+.stApp [class*="st-key-cffab"]{ position:fixed; right:28px; bottom:26px; z-index:999; width:auto !important; }
+.stApp [class*="st-key-cffab"] .stButton button{ background:var(--cf-amber) !important; border:0 !important; border-radius:999px !important;
+  min-height:3.4rem; padding:0 26px; box-shadow:0 12px 26px rgba(180,83,9,.35) !important; }
+.stApp [class*="st-key-cffab"] .stButton button p{ color:#fff !important; font-size:calc(19px * var(--cf-s)) !important; font-weight:800 !important; }
+.stApp [class*="st-key-cffab"] .stButton button:hover{ filter:brightness(1.08); }
+.cf-tcd-steps{ display:flex; gap:8px; margin:0 0 16px; }
+.cf-tcd-steps span{ flex:1; text-align:center; padding:9px 6px; border-radius:12px; background:var(--cf-bg); border:1px solid var(--cf-line);
+  color:var(--cf-muted); font-weight:700; font-size:calc(16px * var(--cf-s)); }
+.cf-tcd-steps span.on{ background:var(--cf-primary); border-color:var(--cf-primary); color:#fff; }
+.cf-tcd-steps span.done{ background:var(--cf-ok-soft); border-color:var(--cf-ok-line); color:var(--cf-ok); }
+[class*="st-key-cftcd_kind_"] .stButton button{ min-height:8rem; border-radius:18px !important; border:1.5px solid var(--cf-line-2) !important; background:#fff !important; }
+[class*="st-key-cftcd_kind_"] .stButton button:hover{ border-color:var(--cf-primary) !important; background:var(--cf-primary-soft) !important; }
+[class*="st-key-cftcd_kind_"] .stButton button p{ font-size:calc(21px * var(--cf-s)) !important; font-weight:800 !important; color:var(--cf-ink) !important; margin:0; }
+[class*="st-key-cftcd_kind_"] .stButton button p + p{ font-size:calc(15px * var(--cf-s)) !important; font-weight:500 !important; color:var(--cf-muted) !important; margin-top:6px; }
+
+/* ---- 週班表（可點版）：每天的「已排」按鈕、未排／代班按鈕、當天班表視窗 ---- */
+.cf-err-detail{ color:var(--cf-amber-ink); font-size:calc(13px * var(--cf-s)); }
+.cf-wk-bar{ height:6px; border-radius:999px; background:var(--cf-line); overflow:hidden; margin-top:8px; }
+.cf-wk-bar i{ display:block; height:100%; background:var(--cf-primary); border-radius:999px; }
+.cf-wk-more{ font-size:calc(14px * var(--cf-s)); color:var(--cf-muted); text-align:center; padding:4px 0; }
+.cf-wk-ok{ font-size:calc(17px * var(--cf-s)); color:var(--cf-ok); font-weight:800; text-align:center; padding:6px 0; }
+.cf-wk-empty{ font-size:calc(15px * var(--cf-s)); color:var(--cf-muted); text-align:center; padding:18px 0; }
+.cf-wk-legend{ display:flex; flex-wrap:wrap; gap:16px; margin:10px 2px 0; font-size:calc(16px * var(--cf-s)); color:var(--cf-muted); }
+.cf-wk-legend i{ display:inline-block; width:18px; height:14px; border-radius:4px; vertical-align:-1px; margin-right:6px; background:var(--cf-bg); border:1px solid var(--cf-line); }
+.cf-wk-legend i.miss{ background:var(--cf-amber-soft); border:2px solid var(--cf-amber-line); }
+.cf-wk-legend i.adj{ background:var(--cf-primary-soft); border:2px dashed var(--cf-primary-2); }
+.cf-wk-range{ font-size:calc(19px * var(--cf-s)); font-weight:900; color:var(--cf-ink); margin:4px 0 10px; }
+.cf-wk-range span{ font-size:calc(15px * var(--cf-s)); font-weight:500; color:var(--cf-muted); margin-left:10px; }
+[class*="st-key-cfwkgrid"]{ background:var(--cf-card); border:1px solid var(--cf-line); border-radius:20px; padding:10px 8px 12px; box-shadow:var(--cf-shadow); }
+[class*="st-key-cfwkgrid"] [data-testid="stHorizontalBlock"]{ gap:6px; }
+[class*="st-key-cfwkgrid"] .cf-wk-day{ border-radius:14px; margin-bottom:6px; }
+[class*="st-key-cfwkb_"] .stButton button{ min-height:2.4rem; padding:6px 8px; border-radius:12px !important; justify-content:flex-start; }
+[class*="st-key-cfwkb_"] .stButton button p{ font-size:calc(16px * var(--cf-s)) !important; font-weight:700 !important; line-height:1.35; white-space:normal; text-align:left; }
+[class*="st-key-cfwkb_miss"] .stButton button{ background:var(--cf-amber-soft) !important; border:2px solid var(--cf-amber-line) !important; }
+[class*="st-key-cfwkb_miss"] .stButton button p{ color:var(--cf-amber-ink) !important; }
+[class*="st-key-cfwkb_miss"] .stButton button:hover{ border-color:var(--cf-amber) !important; }
+[class*="st-key-cfwkb_adj"] .stButton button{ background:var(--cf-primary-soft) !important; border:2px dashed var(--cf-primary-2) !important; }
+[class*="st-key-cfwkb_adj"] .stButton button p{ color:var(--cf-primary-ink) !important; }
+[class*="st-key-cfwkb_norm"] .stButton button{ background:var(--cf-bg) !important; border:1px solid var(--cf-line) !important; }
+[class*="st-key-cfwkb_norm"] .stButton button p{ color:var(--cf-text) !important; }
+[class*="st-key-cfwkday_"] .stButton button{ min-height:6.2rem; border-radius:14px !important; background:var(--cf-card) !important;
+  border:1px solid var(--cf-line-2) !important; justify-content:flex-start; padding:8px 12px; }
+[class*="st-key-cfwkday_"] .stButton button:hover{ border-color:var(--cf-primary) !important; background:var(--cf-primary-soft) !important; }
+[class*="st-key-cfwkday_"] .stButton button p{ margin:0; text-align:left; color:var(--cf-muted) !important; font-size:calc(15px * var(--cf-s)) !important; font-weight:700 !important; }
+[class*="st-key-cfwkday_"] .stButton button p strong{ font-size:calc(34px * var(--cf-s)); font-weight:900; color:var(--cf-ok); }
+[class*="st-key-cfwkday_"] .stButton button p + p{ color:var(--cf-text) !important; margin-top:2px; }
+[class*="st-key-cfwkday_"] .stButton button p + p + p{ color:var(--cf-primary) !important; }
+/* 每天的忙碌時段（上午／下午／晚上）小長條 */
+.cf-wk-busy{ margin:8px 2px 4px; display:grid; gap:5px; }
+.cf-wk-busy-row{ display:grid; grid-template-columns:2.6em 1fr 2em; align-items:center; gap:6px; font-size:calc(14px * var(--cf-s)); color:var(--cf-muted); }
+.cf-wk-busy-row i{ display:block; height:10px; border-radius:999px; background:var(--cf-primary-soft); min-width:4px; }
+.cf-wk-busy-row b{ text-align:right; color:var(--cf-text); font-weight:800; }
+.cf-wk-busy-row.peak i{ background:var(--cf-primary); } .cf-wk-busy-row.peak span, .cf-wk-busy-row.peak b{ color:var(--cf-primary-ink); }
+.cf-dd-head{ display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; margin:-6px 0 12px; }
+.cf-dd-head b{ font-size:calc(30px * var(--cf-s)); font-weight:900; color:var(--cf-primary-ink); }
+.cf-dd-head span{ color:var(--cf-muted); } .cf-dd-head em{ font-style:normal; color:var(--cf-amber-ink); font-weight:700; }
+.cf-dd-head span{ font-size:calc(18px * var(--cf-s)); }
+.cf-dd-row{ display:grid; grid-template-columns:190px 1fr; gap:14px; align-items:start; padding:12px 0; border-top:1px solid var(--cf-line); }
+.cf-dd-row .who b{ display:block; font-size:calc(23px * var(--cf-s)); color:var(--cf-ink); }
+.cf-dd-row .who span{ font-size:calc(16px * var(--cf-s)); color:var(--cf-muted); }
+.cf-dd-row.miss .who b{ color:var(--cf-amber-ink); }
+.cf-dd-row .list{ display:flex; flex-wrap:wrap; gap:8px; }
+.cf-dd-chip{ display:inline-flex; align-items:baseline; gap:6px; border-radius:10px; padding:9px 14px; background:var(--cf-bg); border:1px solid var(--cf-line); font-size:calc(20px * var(--cf-s)); }
+.cf-dd-chip b{ font-weight:800; color:var(--cf-ink); font-variant-numeric:tabular-nums; }
+.cf-dd-chip i{ font-style:normal; font-size:calc(16px * var(--cf-s)); color:var(--cf-muted); }
+.cf-dd-chip.miss{ background:var(--cf-amber-soft); border:2px solid var(--cf-amber-line); } .cf-dd-chip.miss b{ color:var(--cf-amber-ink); }
+.cf-dd-chip.adj{ background:var(--cf-primary-soft); border:2px dashed var(--cf-primary-2); }
+@media (max-width:900px){ .cf-dd-row{ grid-template-columns:1fr; } }
+</style>
+"""
+
+
+def inject_css(scale=0.86):
     """全站樣式：舊版樣式表＋ v2026.11 Design System＋方案 C「暖心大字」覆寫層＋最後修正層（每次重跑都要注入一次）。
-    scale：字體倍率（標準 1.0／大 1.12／特大 1.25），所有字級都以 calc(px × --cf-s) 計算。"""
-    st.markdown(CSS + DESIGN_CSS + WARM_CSS + FIX_CSS + f'<style>:root{{--cf-s:{float(scale):.3f};}}</style>', unsafe_allow_html=True)
+    scale：字體倍率（標準 0.86／大 0.96／特大 1.08），所有字級都以 calc(px × --cf-s) 計算。"""
+    # --cf-s0＝使用者選的倍率；側邊欄收起來時整頁放大 12%（多出來的寬度拿來放大字，而不是留白）
+    st.markdown(CSS + DESIGN_CSS + WARM_CSS + FIX_CSS + TIDY_CSS
+                + f'<style>:root{{--cf-s0:{float(scale):.3f}; --cf-s:var(--cf-s0);}}'
+                + ':root:has(section[data-testid="stSidebar"][data-collapsed="true"]){--cf-s:calc(var(--cf-s0) * 1.12);}'
+                + '</style>', unsafe_allow_html=True)
 
 
-def render_header(ai_ready=True, ai_text=None, privacy_on=True, version='v2026.10', scale=1.12):
-    """全域頂部輕量 Header（方案 C：圓形 Logo、白話狀態）。"""
+def render_header(ai_ready=True, ai_text=None, privacy_on=True, version='v2026.10', scale=0.86, font_label=False):
+    """全域頂部輕量 Header（方案 C：圓形 Logo、白話狀態）。
+    font_label：右側緊接著「字體大小」切換鈕時，在狀態列最後加上標題文字。"""
     from html import escape
     inject_css(scale)
     ai_cls = 'ok' if ai_ready else 'warn'
@@ -361,6 +557,7 @@ def render_header(ai_ready=True, ai_text=None, privacy_on=True, version='v2026.1
         f'<span class="cf-pill {ai_cls}"><i></i>{escape(ai_label)}</span>'
         f'<span class="cf-pill {"ok" if privacy_on else "warn"}">{escape(privacy)}</span>'
         f'<span class="cf-pill ver">{escape(version)}</span>'
+        + ('<span class="cf-font-label">字體大小</span>' if font_label else '') +
         '</div></header>', unsafe_allow_html=True)
 
 
@@ -767,6 +964,22 @@ def kpi_cards(items):
         cards.append(f'<div class="cf-kpi {_e(it.get("tone", "good"))}" title="{_e(it.get("help", ""))}">'
                      f'<span class="lb">{_e(it["label"])}</span><span class="v">{_e(it["value"])}{unit}</span>{sub}</div>')
     st.markdown('<div class="cf-kpis">' + ''.join(cards) + '</div>', unsafe_allow_html=True)
+
+
+def stat_cards(items, cols=4):
+    """彩色數字卡（主管報表附錄、排班儀錶板用）：上緣色條＋大號彩色數字，滑過 ⓘ 看算法。
+
+    items：[dict(label, value, unit='', sub='', tone='primary', help='')]；tone：primary／ok／amber／ai／red。
+    cols：一列幾張（3 或 4 或 5）。"""
+    cards = []
+    for it in items:
+        tone = it.get('tone', 'primary')
+        tip = f'<i title="{_e(it["help"])}">ⓘ</i>' if it.get('help') else ''
+        unit = f'<small>{_e(it["unit"])}</small>' if it.get('unit') else ''
+        sub = f'<span class="sub">{_e(it["sub"])}</span>' if it.get('sub') else ''
+        cards.append(f'<div class="cf-stat {_e(tone)}"><span class="lb">{_e(it["label"])}{tip}</span>'
+                     f'<span class="v">{_e(it["value"])}{unit}</span>{sub}</div>')
+    st.markdown(f'<div class="cf-stats c{int(cols)}">' + ''.join(cards) + '</div>', unsafe_allow_html=True)
 
 
 def conn_card(title, detail, latency=None, tone='ok'):
@@ -1320,30 +1533,66 @@ _AUTH_TEXT = {
 }
 
 
-def auth_card(mode, min_length=8):
-    """置中的登入卡片（只負責畫面，驗證在 app.py 呼叫 auth）。
+AUTH_VIEWS = ('登入', '註冊新帳號', '忘記密碼')
 
-    mode：login（帳號、密碼）／setup（第一次使用：帳號、姓名、密碼兩次）。
-    元件 key：login_user、login_pw／setup_user、setup_name、setup_pw1、setup_pw2。
-    回傳 (送出的欄位 dict 或 None, 訊息容器)；訊息容器給呼叫端放 st.error／st.success。
+
+def auth_card(mode, min_length=8, roles=('居督', '主管')):
+    """入口頁（只負責畫面，驗證在 app.py 呼叫 auth）：置中一張卡，上方品牌，下方表單。
+
+    mode：setup（還沒有任何帳號：建立第一位主管）／login（已有帳號：上方切換 登入／註冊新帳號／忘記密碼）。
+    元件 key：login_user、login_pw／setup_user、setup_name、setup_pw1、setup_pw2／
+             signup_user、signup_name、signup_role、signup_pw1、signup_pw2、signup_note／reset_user、reset_name、reset_pw1、reset_pw2。
+    回傳 (動作, 送出的欄位 dict 或 None, 訊息容器)；動作是 setup／login／signup／reset。
     """
-    title, sub, button, foot = _AUTH_TEXT[mode]
-    _, middle, _ = st.columns([1, 1.3, 1])
+    _, middle, _ = st.columns([1, 1.35, 1])
     with middle:
-        st.markdown(run_card_html(title, sub), unsafe_allow_html=True)
-        with st.form(f'cf_auth_{mode}', clear_on_submit=False):
-            if mode == 'setup':
-                username = st.text_input('帳號（英文或數字）', key='setup_user', placeholder='例如 boss01')
-                name = st.text_input('姓名', key='setup_name', placeholder='畫面右側顯示用')
-                password = st.text_input(f'密碼（至少 {min_length} 個字）', type='password', key='setup_pw1')
-                confirm = st.text_input('再輸入一次密碼', type='password', key='setup_pw2')
+        # 品牌已在最上方頁首，這裡不重複；只放一句歡迎詞
+        if mode == 'setup':
+            view, action = None, 'setup'
+            st.markdown('<div class="cf-entry-title">第一次使用：建立主管帳號</div>'
+                        '<div class="cf-entry-sub">系統還沒有任何帳號。先建立一位主管；之後其他人可以在入口頁「註冊新帳號」，由主管核准。</div>',
+                        unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="cf-entry-title">歡迎使用 HomeCare AI</div>'
+                        '<div class="cf-entry-sub">居督與主管的排班工作台。還沒有帳號可以直接申請。</div>', unsafe_allow_html=True)
+            view = st.segmented_control('要做什麼', AUTH_VIEWS, default=AUTH_VIEWS[0], key='cf_auth_view',
+                                        label_visibility='collapsed', width='stretch') or AUTH_VIEWS[0]
+            action = {'登入': 'login', '註冊新帳號': 'signup', '忘記密碼': 'reset'}[view]
+        values = {}
+        with st.form(f'cf_auth_{action}', clear_on_submit=False, border=True):
+            if action == 'setup':
+                values['username'] = st.text_input('帳號（英文或數字）', key='setup_user', placeholder='例如 boss01')
+                values['name'] = st.text_input('姓名', key='setup_name', placeholder='畫面右上角顯示用')
+                values['password'] = st.text_input(f'密碼（至少 {min_length} 個字）', type='password', key='setup_pw1')
+                values['confirm'] = st.text_input('再輸入一次密碼', type='password', key='setup_pw2')
+                label = '建立主管帳號並登入'
+            elif action == 'login':
+                values['username'] = st.text_input('帳號', key='login_user')
+                values['password'] = st.text_input('密碼', type='password', key='login_pw')
+                label = '登入'
+            elif action == 'signup':
+                values['username'] = st.text_input('想用的帳號（英文或數字）', key='signup_user', placeholder='例如 amy01')
+                values['name'] = st.text_input('姓名', key='signup_name', placeholder='主管核准時用來確認是你')
+                values['role'] = st.radio('身分', list(roles), key='signup_role', horizontal=True,
+                                          help='居督：匯入、排班、處理問題、確認班表。主管：另外可以看主管報表、管理帳號。'
+                                               '這只是申請，最後由主管核准並決定身分。')
+                values['password'] = st.text_input(f'密碼（至少 {min_length} 個字）', type='password', key='signup_pw1')
+                values['confirm'] = st.text_input('再輸入一次密碼', type='password', key='signup_pw2')
+                values['note'] = st.text_input('給主管的話（選填）', key='signup_note', placeholder='例如：新進居督，負責北區')
+                label = '送出註冊申請'
             else:
-                username = st.text_input('帳號', key='login_user')
-                password = st.text_input('密碼', type='password', key='login_pw')
-                name = confirm = None
-            submitted = st.form_submit_button(button, type='primary', width='stretch')
+                values['username'] = st.text_input('帳號', key='reset_user')
+                values['name'] = st.text_input('姓名（要和帳號登記的一樣）', key='reset_name')
+                values['password'] = st.text_input(f'新密碼（至少 {min_length} 個字）', type='password', key='reset_pw1')
+                values['confirm'] = st.text_input('再輸入一次新密碼', type='password', key='reset_pw2')
+                label = '送出重設申請'
+            submitted = st.form_submit_button(label, type='primary', width='stretch')
         note = st.container()
-        st.caption(foot)
-    if not submitted:
-        return None, note
-    return {'username': username, 'name': name, 'password': password, 'confirm': confirm}, note
+        st.caption({
+            'setup': '主管可以使用全部功能，包含主管報表與帳號管理；請妥善保管密碼。',
+            'login': '還沒有帳號？選上方「註冊新帳號」。忘記密碼或被鎖定，選「忘記密碼」。',
+            'signup': '送出後請通知主管到「👥 帳號管理」核准，核准後就能登入。',
+            'reset': '先設好新密碼，再請主管到「👥 帳號管理」核准，核准後用新密碼登入。'
+                     '唯一的主管忘記密碼時，請在這台電腦執行：python tools/reset_password.py 帳號',
+        }[action])
+    return action, (values if submitted else None), note
