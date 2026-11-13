@@ -87,15 +87,18 @@ def _ai_items(week_rows, labels, days):
 _PERIODS = (('上午', 0, 12 * 60), ('下午', 12 * 60, 17 * 60), ('晚上', 17 * 60, 24 * 60))
 
 
-def _busy_html(day_rows):
-    """當天哪個時段最忙：上午／下午／晚上各有幾筆服務（以開始時間計），長條越長越忙，最忙的一段標深色。"""
-    counts = []
-    for name, lo, hi in _PERIODS:
-        counts.append((name, sum(1 for r in day_rows if lo <= (_minutes(r['start']) or 0) < hi)))
-    peak = max((n for _, n in counts), default=0) or 1
-    bars = ''.join(f'<div class="cf-wk-busy-row{" peak" if n == peak and n else ""}"><span>{name}</span>'
-                   f'<i style="width:{n / peak * 100:.0f}%"></i><b>{n}</b></div>' for name, n in counts)
-    return f'<div class="cf-wk-busy" title="各時段開始的服務數">{bars}</div>'
+def _period_counts(day_rows):
+    """上午／下午／晚上各有幾筆服務（以開始時間計）。"""
+    return [(name, sum(1 for r in day_rows if lo <= (_minutes(r['start']) or 0) < hi)) for name, lo, hi in _PERIODS]
+
+
+def _heat_html(day_rows, peak=None):
+    """當天哪個時段最忙：上午／下午／晚上三格色塊，顏色越深服務越多（h0～h4，peak＝整週最多的一格，各天可互相比較）。"""
+    counts = _period_counts(day_rows)
+    peak = peak or max((n for _, n in counts), default=0) or 1
+    cells = ''.join(f'<div class="cell h{min(4, round(n / peak * 4)) if n else 0}"><span>{name}</span><b>{n}</b></div>'
+                    for name, n in counts)
+    return f'<div class="cf-wk-heat" title="各時段開始的服務數">{cells}</div>'
 
 
 def render_week_board(rows, labels, period_start=None, on_go_issues=None, max_exceptions=6, on_open=None):
@@ -117,9 +120,15 @@ def render_week_board(rows, labels, period_start=None, on_go_issues=None, max_ex
 
     active = sorted({r['cg'] for r in rows if r.get('cg')})
     options = [_ALL] + active + sorted(set(labels) - set(active))
-    c1, c2, c3, c4 = st.columns([3, 2.2, 1.1, 1.1], vertical_alignment='bottom')
+    if st.session_state.get('cfwb_view') not in ('週', '月'):
+        st.session_state['cfwb_view'] = '週'
+    c0, c1, c2, c3, c4 = st.columns([1.3, 3, 2.2, 1.1, 1.1], vertical_alignment='bottom')
+    view = c0.segmented_control('檢視', ['週', '月'], key='cfwb_view', help='月：整段期間一格一天，點一天回到那一週')
     person = c1.selectbox('看誰的班表', options, key='cfwb_person',
                           format_func=lambda x: '全部居服員（每日總覽）' if x == _ALL else _worker(labels, x))
+    if view == '月':
+        _month_grid(rows, person, labels, date.today().isoformat())
+        return
     start = c2.date_input('週起日', key='cfwb_week')
     c3.button('‹ 上一週', key='cfwb_prev', on_click=_shift, args=(-7,), width='stretch')
     c4.button('下一週 ›', key='cfwb_next', on_click=_shift, args=(7,), width='stretch', type='primary')
@@ -261,50 +270,133 @@ def _button_label(row, labels, person_mode):
     return f"{mark}  {row['start']}–{row['end']}  {who}"
 
 
+def _popover(label, key):
+    """收合用的小視窗按鈕；舊版 Streamlit 沒有 width 參數時退回預設寬度。"""
+    with st.container(key=key):
+        try:
+            return st.popover(label, width='stretch')
+        except TypeError:
+            return st.popover(label)
+
+
+def _task_button(r, labels, person_mode, on_open):
+    tone = 'miss' if not r.get('cg') else ('adj' if r.get('tag') in ('代班', '已調整') else 'norm')
+    with st.container(key=f'cfwkb_{tone}_{r["id"]}'):
+        st.button(_button_label(r, labels, person_mode), key=f'cfwk_open_{r["id"]}', on_click=on_open,
+                  args=(r['id'],), width='stretch', help='點一下：查看可派人選、改派或改時間')
+
+
+def _grouped_buttons(items, kind, d, labels, on_open):
+    """未排或代班的服務：只有 1 筆就直接放按鈕；2 筆以上收成一顆「🟠 3 筆未排」小視窗，每天高度一致。"""
+    if not items:
+        return
+    if len(items) == 1:
+        _task_button(items[0], labels, False, on_open)
+        return
+    label = f'🟠 {len(items)} 筆未排 ›' if kind == 'miss' else f'🔁 {len(items)} 筆代班／已調整 ›'
+    with _popover(label, f'cfwkpop_{kind}_{d}'):
+        for r in items:
+            _task_button(r, labels, False, on_open)
+
+
+def _day_kind(d, today):
+    """欄位底色用：today（今天）／wkend（週六、週日）／wd（平日）。"""
+    return 'today' if d == today else ('wkend' if pd.Timestamp(d).weekday() >= 5 else 'wd')
+
+
 def _interactive_grid(days, shown, labels, person_mode, today, max_exceptions, on_open):
-    """新版操作：7 欄週班表，需要注意的服務是按鈕，點了開啟改派視窗（與拖曳日曆共用同一個視窗與檢查）。"""
+    """新版操作：7 欄週班表，需要注意的服務是按鈕，點了開啟改派視窗（與拖曳日曆共用同一個視窗與檢查）。
+
+    全部居服員模式每天依序是：環形完成度＋已排筆數、「看當天班表」按鈕、上午／下午／晚上熱度色塊、
+    未排與代班（2 筆以上收成小視窗）。週末淡色底、今天加外框。"""
+    from careflow_ui import ring_html
+    week_peak = max([_period_counts([r for r in shown if r['date'] == d])[i][1] for d in days for i in range(3)] or [0])
     with st.container(key='cfwkgrid'):
         cols = st.columns(7, gap='small')
         for col, d in zip(cols, days):
             day = pd.Timestamp(d)
             day_rows = [r for r in shown if r['date'] == d]
-            cls = ' today' if d == today else (' off' if not day_rows else '')
-            with col:
+            kind = _day_kind(d, today)
+            cls = (' today' if kind == 'today' else '') + (' wkend' if day.weekday() >= 5 else '') + ('' if day_rows else ' off')
+            with col, st.container(key=f'cfwkcol_{kind}_{d}'):
                 if person_mode:
                     mins = sum(max(0, (_minutes(r['end']) or 0) - (_minutes(r['start']) or 0)) for r in day_rows)
                     sub = f'{len(day_rows)} 筆 · {mins / 60:.1f} 小時' if day_rows else '休息'
                 else:
-                    sub = '' if day_rows else '沒有服務'      # 服務數已寫在下方按鈕（89／90 已排），不重複
-                st.markdown(f'<div class="cf-wk-day{cls}"><b>{_WEEKDAYS[day.weekday()]} {day:%m/%d}</b>'
+                    sub = '' if day_rows else '沒有服務'
+                badge = '<em>今天</em>' if kind == 'today' else ''
+                st.markdown(f'<div class="cf-wk-day{cls}"><b>{_WEEKDAYS[day.weekday()]} {day:%m/%d}{badge}</b>'
                             + (f'<span>{sub}</span>' if sub else '') + '</div>', unsafe_allow_html=True)
                 if not day_rows:
                     st.markdown('<div class="cf-wk-empty">' + ('這天沒有排班' if person_mode else '—') + '</div>', unsafe_allow_html=True)
                     continue
                 if person_mode:
-                    notable = day_rows
-                else:
-                    missing = [r for r in day_rows if not r.get('cg')]
-                    adjusted = [r for r in day_rows if r.get('cg') and r.get('tag') in ('代班', '已調整')]
-                    done = len(day_rows) - len(missing)
-                    workers = len({r['cg'] for r in day_rows if r.get('cg')})
-                    with st.container(key=f'cfwkday_{"ok" if not missing else "miss"}_{d}'):
-                        # 大字是「服務筆數」（已排／全部），不是人數；人數另寫「位居服員上班」，和當天班表視窗同一說法。
-                        st.button(f'**{done}**／{len(day_rows)} 筆\n\n服務已排 · 👥 {workers} 位居服員\n\n看當天班表 ›', key=f'cfwk_day_{d}',
-                                  on_click=_open_day, args=(d,), width='stretch', help='點開看這一天每位居服員的完整班表')
-                    st.markdown(_busy_html(day_rows), unsafe_allow_html=True)
-                    notable = (missing + adjusted)[:max_exceptions]
-                    hidden = len(missing) + len(adjusted) - len(notable)
-                for r in notable:
-                    tone = 'miss' if not r.get('cg') else ('adj' if r.get('tag') in ('代班', '已調整') else 'norm')
-                    with st.container(key=f'cfwkb_{tone}_{r["id"]}'):
-                        st.button(_button_label(r, labels, person_mode), key=f'cfwk_open_{r["id"]}', on_click=on_open,
-                                  args=(r['id'],), width='stretch', help='點一下：查看可派人選、改派或改時間')
-                if not person_mode:
-                    # 只列需要處理的（未排、代班／已調整）；其他都已排好，不再寫「其餘 N 筆正常班次」
-                    if not notable:
-                        st.markdown('<div class="cf-wk-ok">✓ 全部排好</div>', unsafe_allow_html=True)
-                    elif hidden > 0:
-                        st.markdown(f'<div class="cf-wk-more">還有 {hidden} 筆要看，點上方「看當天班表」</div>', unsafe_allow_html=True)
+                    for r in day_rows:
+                        _task_button(r, labels, True, on_open)
+                    continue
+                missing = [r for r in day_rows if not r.get('cg')]
+                adjusted = [r for r in day_rows if r.get('cg') and r.get('tag') in ('代班', '已調整')]
+                done = len(day_rows) - len(missing)
+                pct = done / len(day_rows) * 100
+                workers = len({r['cg'] for r in day_rows if r.get('cg')})
+                tone = 'ok' if not missing else 'miss'
+                # 大字是「服務筆數」（已排／全部），不是人數；人數另寫「位居服員」，和當天班表視窗同一說法。
+                st.markdown(f'<div class="cf-wk-donut {tone}"><span class="ring">{ring_html(pct, f"已排 {pct:.0f}%")}'
+                            f'<i>{pct:.0f}%</i></span><div><b>{done}<small>／{len(day_rows)} 筆</small></b>'
+                            f'<span>👥 {workers} 位居服員</span></div></div>', unsafe_allow_html=True)
+                with st.container(key=f'cfwkdaylink_{d}'):
+                    st.button('看當天班表 ›', key=f'cfwk_day_{d}', on_click=_open_day, args=(d,), width='stretch',
+                              help='點開看這一天每位居服員的完整班表')
+                st.markdown(_heat_html(day_rows, week_peak), unsafe_allow_html=True)
+                _grouped_buttons(missing, 'miss', d, labels, on_open)
+                _grouped_buttons(adjusted, 'adj', d, labels, on_open)
+                if not missing and not adjusted:
+                    st.markdown('<div class="cf-wk-ok">✓ 全部排好</div>', unsafe_allow_html=True)
     st.markdown('<div class="cf-wk-legend"><span><i class="miss"></i>未排：點一下安排居服員</span>'
-                '<span><i class="adj"></i>代班／已調整：點一下可再改</span><span>選上方「看誰的班表」可看單一居服員整週，每筆都能點</span></div>',
+                '<span><i class="adj"></i>代班／已調整：點一下可再改</span>'
+                '<span><i class="heat"></i>上午／下午／晚上：顏色越深服務越多</span>'
+                '<span>選上方「看誰的班表」可看單一居服員整週，每筆都能點</span></div>',
                 unsafe_allow_html=True)
+
+
+def _go_week(day):
+    """月檢視點了某一天：切回週檢視，顯示那一週。"""
+    d = pd.Timestamp(day).date()
+    st.session_state['cfwb_week'] = d - timedelta(days=d.weekday())
+    st.session_state['cfwb_view'] = '週'
+
+
+def _month_grid(rows, person, labels, today):
+    """月檢視：整段排班期間一格一天，只看完成度（全部居服員）或時數（單一居服員）；點一天切回那一週。"""
+    shown = [r for r in rows if r.get('cg') == person] if person != _ALL else rows
+    dates = sorted({r['date'] for r in rows})
+    first, last = pd.Timestamp(dates[0]).date(), pd.Timestamp(dates[-1]).date()
+    start = first - timedelta(days=first.weekday())
+    weeks = (last - start).days // 7 + 1
+    st.markdown('<div class="cf-wk-mhead">' + ''.join(f'<span>{w}</span>' for w in _WEEKDAYS) + '</div>',
+                unsafe_allow_html=True)
+    for w in range(weeks):
+        cols = st.columns(7, gap='small')
+        for i, col in enumerate(cols):
+            d = (start + timedelta(days=w * 7 + i)).isoformat()
+            day_rows = [r for r in shown if r['date'] == d]
+            in_period = dates[0] <= d <= dates[-1]
+            if not in_period:
+                col.markdown('<div class="cf-wk-mout"></div>', unsafe_allow_html=True)
+                continue
+            day = pd.Timestamp(d)
+            if not day_rows:
+                state, text = 'off', '—'
+            elif person != _ALL:
+                mins = sum(max(0, (_minutes(r['end']) or 0) - (_minutes(r['start']) or 0)) for r in day_rows)
+                state, text = 'ok', f'{mins / 60:.1f} 小時'
+            else:
+                miss = sum(1 for r in day_rows if not r.get('cg'))
+                state = 'miss' if miss else 'ok'
+                text = f'🟠 {miss} 筆未排' if miss else '✓ 全部排好'
+            kind = _day_kind(d, today)
+            with col, st.container(key=f'cfwkmon_{state}_{kind}_{d}'):
+                st.button(f'**{day.month}/{day.day}**\n\n{text}', key=f'cfwk_mon_{d}', on_click=_go_week, args=(d,),
+                          width='stretch', help='點一下切回週檢視，看這一週')
+    st.markdown('<div class="cf-wk-legend"><span><i class="ok"></i>全部排好</span><span><i class="miss"></i>還有未排</span>'
+                '<span>點任一天切回那一週</span></div>', unsafe_allow_html=True)

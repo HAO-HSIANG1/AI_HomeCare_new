@@ -258,6 +258,9 @@ FIX_CSS = """
 
 /* ---- 重跑期間不要把畫面淡化 ---- */
 [data-stale="true"], .stale-element, [data-testid="stElementContainer"][data-stale="true"]{ opacity:1 !important; filter:none !important; }
+/* 過期的底部操作列（例如同一頁 tone 改變後留下的舊列）重跑超過 0.8 秒就藏起來，避免畫面出現兩列 */
+[data-stale="true"] [class*="st-key-cfactionbar_"], [class*="st-key-cfactionbar_"][data-stale="true"]{ animation:cfstalehide 0s linear .8s forwards; }
+@keyframes cfstalehide{ to{ visibility:hidden; height:0; margin:0; padding:0; overflow:hidden; } }
 
 /* ---- 主要按鈕：深藍底＋白字，所有狀態一致 ---- */
 .stButton button[kind^="primary"], .stDownloadButton button[kind^="primary"], .stFormSubmitButton button[kind^="primary"],
@@ -555,7 +558,10 @@ body:has(.cf-entry-sub) section[data-testid="stSidebar"], body:has(.cf-entry-sub
   border:1px solid var(--cf-line); border-radius:20px; margin:8px 0 14px; overflow:hidden; }
 .cf-strip .cell{ --c:var(--cf-primary); padding:16px 22px; border-left:1px solid var(--cf-line); display:flex; flex-direction:column; gap:4px; min-width:0; }
 .cf-strip .cell:first-child{ border-left:0; }
-.cf-strip .cell.warn{ --c:var(--cf-amber); background:var(--cf-amber-soft); } .cf-strip .cell.bad{ --c:var(--cf-red); background:var(--cf-red-soft); }
+/* 提醒格用白底＋上緣色條：淡琥珀底和頁面米色底太像，看起來像沒有卡片 */
+.cf-strip .cell.warn{ --c:var(--cf-amber); background:var(--cf-card); box-shadow:inset 0 5px 0 var(--cf-amber); }
+.cf-strip .cell.bad{ --c:var(--cf-red); background:var(--cf-card); box-shadow:inset 0 5px 0 var(--cf-red); }
+.cf-strip .cell.warn .sub{ color:var(--cf-amber-ink); font-weight:700; } .cf-strip .cell.bad .sub{ color:var(--cf-red-ink); font-weight:700; }
 .cf-strip .cell.ai{ --c:var(--cf-ai-1); }
 .cf-strip .lb{ font-size:calc(16px * var(--cf-s)); font-weight:700; color:var(--cf-muted); }
 .cf-strip .row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
@@ -564,6 +570,69 @@ body:has(.cf-entry-sub) section[data-testid="stSidebar"], body:has(.cf-entry-sub
 .cf-strip .sub{ font-size:calc(15px * var(--cf-s)); color:var(--cf-text); }
 .cf-strip .cf-ring{ width:calc(50px * var(--cf-s)); height:calc(50px * var(--cf-s)); }
 @media (max-width:900px){ .cf-strip .cell{ border-left:0; border-top:1px solid var(--cf-line); } .cf-strip .cell:first-child{ border-top:0; } }
+
+/* 試辦 KPI 卡（kpi_cards）：左側燈號色條、細進度條＋達標區間、目標文字、ⓘ 算法、B1 寬卡分布長條 */
+.cf-kpi{ box-shadow:inset 6px 0 0 var(--k, var(--cf-line-2)); padding-left:26px; }
+.cf-kpi.ok{ --k:var(--cf-ok); --c:var(--cf-ok); } .cf-kpi.ok .v{ color:var(--cf-ok); }
+.cf-kpi .lb .tip{ font-style:normal; margin-left:6px; color:var(--cf-muted); cursor:help; font-weight:400; }
+.cf-meter{ display:block; position:relative; height:8px; border-radius:999px; background:#EFE8DD; margin:10px 0 6px; overflow:hidden; }
+.cf-meter .zone{ position:absolute; top:0; bottom:0; background:var(--cf-ok-soft); box-shadow:inset 0 0 0 1px var(--cf-ok-line); }
+.cf-meter .bar{ position:absolute; left:0; top:0; bottom:0; background:var(--k, var(--cf-primary)); border-radius:999px; }
+.cf-kpi .goal{ display:block; font-size:calc(15px * var(--cf-s)); font-weight:800; color:var(--cf-muted); }
+.cf-kpi.ok .goal{ color:var(--cf-ok); } .cf-kpi.warn .goal{ color:var(--cf-amber-ink); } .cf-kpi.bad .goal{ color:var(--cf-red-ink); }
+.cf-kpi .note{ display:block; font-size:calc(15px * var(--cf-s)); color:var(--cf-text); margin-top:4px; }
+.cf-kpi.bad .note{ color:var(--cf-red-ink); font-weight:700; }
+.cf-kpi.wide{ grid-column:span 2; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.25fr); gap:28px; align-items:center; }
+.cf-spread .bar{ display:flex; gap:2px; height:18px; border-radius:999px; overflow:hidden; background:#EFE8DD; }
+.cf-spread .bar i{ display:block; height:100%; }
+.cf-spread .s1{ background:var(--cf-primary); } .cf-spread .s2{ background:var(--cf-amber); } .cf-spread .s3{ background:var(--cf-red); }
+.cf-spread .lg{ display:flex; flex-wrap:wrap; gap:6px 16px; margin-top:10px; font-size:calc(15px * var(--cf-s)); color:var(--cf-text); }
+.cf-spread .lg span{ display:inline-flex; align-items:center; gap:6px; } .cf-spread .lg b{ width:12px; height:12px; border-radius:3px; display:inline-block; }
+@media (max-width:900px){ .cf-kpi.wide{ grid-column:auto; grid-template-columns:1fr; gap:12px; } }
+
+/* 週班表（week_board._interactive_grid）：環形完成度、時段熱度色塊、未排收合、今天外框；月檢視。週末和平日同一底色 */
+[class*="st-key-cfwkcol_today_"]{ outline:2px solid var(--cf-primary); outline-offset:-2px; border-radius:14px; padding:4px; background:#F4F9FB; }
+.cf-wk-day b em{ font-style:normal; font-size:calc(13px * var(--cf-s)); font-weight:800; color:#fff; background:var(--cf-primary);
+  border-radius:999px; padding:1px 8px; margin-left:6px; vertical-align:2px; }
+.cf-wk-donut{ display:flex; align-items:center; gap:10px; padding:6px 4px 4px; }
+.cf-wk-donut .ring{ position:relative; flex:0 0 auto; }
+.cf-wk-donut .cf-ring{ width:calc(56px * var(--cf-s)); height:calc(56px * var(--cf-s)); }
+.cf-wk-donut .ring i{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-style:normal;
+  font-size:calc(13px * var(--cf-s)); font-weight:900; color:var(--c); }
+.cf-wk-donut.ok{ --c:var(--cf-ok); } .cf-wk-donut.miss{ --c:var(--cf-amber); }
+.cf-wk-donut b{ display:block; font-size:calc(28px * var(--cf-s)); font-weight:900; color:var(--cf-ink); line-height:1.1; font-variant-numeric:tabular-nums; }
+.cf-wk-donut b small{ font-size:calc(15px * var(--cf-s)); font-weight:700; color:var(--cf-muted); margin-left:2px; }
+.cf-wk-donut span{ display:block; font-size:calc(14px * var(--cf-s)); color:var(--cf-text); margin-top:2px; }
+[class*="st-key-cfwkdaylink_"] .stButton button{ min-height:2.1rem; padding:2px 8px; border-radius:10px !important; background:transparent !important;
+  border:1px solid var(--cf-line) !important; }
+[class*="st-key-cfwkdaylink_"] .stButton button p{ font-size:calc(14px * var(--cf-s)) !important; color:var(--cf-primary) !important; font-weight:800 !important; }
+[class*="st-key-cfwkdaylink_"] .stButton button:hover{ background:var(--cf-primary-soft) !important; border-color:var(--cf-primary) !important; }
+.cf-wk-heat{ display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:4px; margin:8px 0 6px; }
+.cf-wk-heat .cell{ border-radius:8px; padding:4px 2px; text-align:center; line-height:1.25; background:#F1ECE4; color:var(--cf-muted); }
+.cf-wk-heat .cell span{ display:block; font-size:calc(12px * var(--cf-s)); font-weight:700; }
+.cf-wk-heat .cell b{ display:block; font-size:calc(16px * var(--cf-s)); font-weight:900; font-variant-numeric:tabular-nums; }
+.cf-wk-heat .h1{ background:#E3EEF3; color:var(--cf-primary-ink); } .cf-wk-heat .h2{ background:#BCD6E1; color:var(--cf-primary-ink); }
+.cf-wk-heat .h3{ background:#6E9EB2; color:#fff; } .cf-wk-heat .h4{ background:var(--cf-primary); color:#fff; }
+.cf-wk-legend i.heat{ background:linear-gradient(90deg,#E3EEF3 0 33%,#6E9EB2 33% 66%,#1F5F7A 66%); border:0; }
+.cf-wk-legend i.ok{ background:var(--cf-ok-soft); border:2px solid var(--cf-ok-line); }
+[class*="st-key-cfwkpop_"] button{ border-radius:12px !important; min-height:2.4rem; }
+[class*="st-key-cfwkpop_miss"] button{ background:var(--cf-amber-soft) !important; border:2px solid var(--cf-amber-line) !important; }
+[class*="st-key-cfwkpop_miss"] button p{ color:var(--cf-amber-ink) !important; font-weight:800 !important; }
+[class*="st-key-cfwkpop_adj"] button{ background:var(--cf-primary-soft) !important; border:2px dashed var(--cf-primary-2) !important; }
+[class*="st-key-cfwkpop_adj"] button p{ color:var(--cf-primary-ink) !important; font-weight:800 !important; }
+.cf-wk-mhead{ display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:6px; margin:6px 0 4px; text-align:center;
+  font-size:calc(16px * var(--cf-s)); font-weight:800; color:var(--cf-muted); }
+.cf-wk-mout{ min-height:4.2rem; }
+[class*="st-key-cfwkmon_"] .stButton button{ min-height:4.2rem; border-radius:12px !important; padding:6px 8px; justify-content:flex-start;
+  background:var(--cf-card) !important; border:1px solid var(--cf-line) !important; }
+[class*="st-key-cfwkmon_"] .stButton button p{ margin:0; text-align:left; font-size:calc(14px * var(--cf-s)) !important; font-weight:700 !important; color:var(--cf-muted) !important; }
+[class*="st-key-cfwkmon_"] .stButton button p strong{ font-size:calc(19px * var(--cf-s)); color:var(--cf-ink); }
+[class*="st-key-cfwkmon_ok_"] .stButton button{ background:var(--cf-ok-soft) !important; border-color:var(--cf-ok-line) !important; }
+[class*="st-key-cfwkmon_ok_"] .stButton button p{ color:var(--cf-ok) !important; }
+[class*="st-key-cfwkmon_miss_"] .stButton button{ background:var(--cf-amber-soft) !important; border:2px solid var(--cf-amber-line) !important; }
+[class*="st-key-cfwkmon_miss_"] .stButton button p{ color:var(--cf-amber-ink) !important; }
+[class*="st-key-cfwkmon_"][class*="_today_"] .stButton button{ outline:2px solid var(--cf-primary); outline-offset:1px; }
+[class*="st-key-cfwkmon_"] .stButton button:hover{ border-color:var(--cf-primary) !important; }
 </style>
 """
 
@@ -717,7 +786,10 @@ def module_header(key):
     from html import escape
     _, number, title, purpose, role = _MODULE_INFO[key]
     acc, soft, ink = MODULE_COLORS.get(key, MODULE_COLORS['schedule'])
-    st.markdown(f'<style>:root{{--cf-acc:{acc};--cf-acc-soft:{soft};--cf-acc-ink:{ink};}}</style>', unsafe_allow_html=True)
+    # 換頁重跑時，上一頁的底部操作列（過期元素）會留在畫面上，看起來像重複的兩列；只留本頁的操作列。
+    st.markdown(f'<style>:root{{--cf-acc:{acc};--cf-acc-soft:{soft};--cf-acc-ink:{ink};}}'
+                f'[class*="st-key-cfactionbar_"]:not([class*="cfactionbar_info_{key}"]):not([class*="cfactionbar_warn_{key}"])'
+                '{display:none !important;}</style>', unsafe_allow_html=True)
     role_html = f'<span class="cf-role{" mgr" if role == "主管" else ""}">{escape(role)}</span>'
     st.markdown(f'<div id="module-{escape(key)}" class="cf-module"><span class="cf-number">{escape(number)}</span>'
                 f'<div><h2>{escape(title)}{role_html}</h2><p>{escape(purpose)}</p></div></div>', unsafe_allow_html=True)
@@ -1051,20 +1123,93 @@ def ring_html(percent, label=''):
             f'<circle class="val" cx="18" cy="18" r="15.9155" stroke-dasharray="{value:.1f} 100"/></svg>')
 
 
+_GOAL_MARK = {'ok': '✓', 'warn': '!', 'bad': '↓'}
+
+
+def _meter_html(meter, band=None):
+    """細進度條：meter 0～100；band＝(起, 迄) 0～100 的達標區間，用淡綠底標出。"""
+    zone = (f'<i class="zone" style="left:{band[0]:.1f}%;width:{max(0.0, band[1] - band[0]):.1f}%"></i>'
+            if band else '')
+    return f'<span class="cf-meter" aria-hidden="true">{zone}<i class="bar" style="width:{float(meter):.1f}%"></i></span>'
+
+
+def _spread_html(parts):
+    """一條分段長條＋圖例。parts：[(文字, 數量, class)]，class：s1／s2／s3。"""
+    total = sum(n for _, n, _ in parts) or 1
+    bar = ''.join(f'<i class="{_e(c)}" style="width:{n / total * 100:.1f}%"></i>' for _, n, c in parts if n)
+    legend = ''.join(f'<span><b class="{_e(c)}"></b>{_e(t)} {n:,} 戶</span>' for t, n, c in parts)
+    return f'<div class="cf-spread"><div class="bar">{bar}</div><div class="lg">{legend}</div></div>'
+
+
 def kpi_cards(items):
-    """KPI 卡：數字與標籤分行顯示，不會截斷。items：[dict(label, value, unit, sub, tone, ring)]，tone：good／warn／bad／ai；
-    ring：0～100 的比例（可省略），有給就在數字右邊畫小圓環。"""
+    """KPI 卡：數字與標籤分行顯示，不會截斷。
+
+    items：[dict(label, value, unit, sub, tone, ring, help, tip, meter, band, goal, note, wide, spread)]
+    - tone：good／ok／warn／bad／ai，決定左側色條與數字顏色；ring：0～100，數字右邊畫小圓環。
+    - tip：標籤右邊的 ⓘ，滑過看算法；meter／band：數字下方的細進度條與達標區間（0～100）。
+    - goal：進度條下的「目標 ≥98%」，前面依 tone 加 ✓／!／↓；note：再補一行提醒。
+    - wide=True：這張卡佔兩格；spread：[(文字, 數量, s1／s2／s3)]，在卡片右半邊畫分布長條。"""
     cards = []
     for it in items:
+        tone = it.get('tone', 'good')
         unit = f'<small>{_e(it["unit"])}</small>' if it.get('unit') else ''
         sub = f'<span class="sub">{_e(it["sub"])}</span>' if it.get('sub') else ''
         ring = ring_html(it['ring'], it['label']) if it.get('ring') is not None else ''
+        tip = f'<i class="tip" title="{_e(it["tip"])}">ⓘ</i>' if it.get('tip') else ''
         value = f'<span class="v">{_e(it["value"])}{unit}</span>'
         if ring:
             value = f'<span class="cf-kpi-row">{value}{ring}</span>'
-        cards.append(f'<div class="cf-kpi {_e(it.get("tone", "good"))}" title="{_e(it.get("help", ""))}">'
-                     f'<span class="lb">{_e(it["label"])}</span>{value}{sub}</div>')
+        meter = _meter_html(it['meter'], it.get('band')) if it.get('meter') is not None else ''
+        mark = _GOAL_MARK.get(tone, '')
+        goal = f'<span class="goal">{_e(mark + " " if mark else "")}{_e(it["goal"])}</span>' if it.get('goal') else ''
+        note = f'<span class="note">{_e(it["note"])}</span>' if it.get('note') else ''
+        main = f'<span class="lb">{_e(it["label"])}{tip}</span>{value}{meter}{goal}{sub}{note}'
+        wide = ' wide' if it.get('wide') else ''
+        if it.get('spread'):
+            main = f'<div class="cf-kpi-main">{main}</div>{_spread_html(it["spread"])}'
+        cards.append(f'<div class="cf-kpi {_e(tone)}{wide}" title="{_e(it.get("help", ""))}">{main}</div>')
     st.markdown('<div class="cf-kpis">' + ''.join(cards) + '</div>', unsafe_allow_html=True)
+
+
+def load_chart(frame, info, colors):
+    """人力負荷分布（橫向長條，Altair）：依總工時排序；每條分「服務／轉場」兩段（轉場較淡），
+    顏色依偏高／接近平均／偏低，淡綠底＝平均 ±20%、虛線＝平均；接近或超過月加班上限的人在條尾標 ⚠／⛔。
+
+    frame、info：manager_report.load_chart_frame() 的回傳；colors：manager_report.LOAD_COLORS。回傳 Altair 圖表。
+    Altair 讀不到 CSS 變數，色碼由 manager_report 的常數傳入（和 WARM_CSS 同一組）。"""
+    import altair as alt
+    import pandas as pd
+
+    names = list(frame['居服員'])
+    long = frame.melt(id_vars=['居服員', '總工時', '區間', '加班狀態'], value_vars=['服務工時', '轉場工時'],
+                      var_name='段', value_name='工時')
+    long['段'] = long['段'].str.replace('工時', '', regex=False)
+    y = alt.Y('居服員:N', sort=names, title=None, axis=alt.Axis(labelFontSize=13, labelLimit=180, ticks=False, domain=False))
+    tip = [alt.Tooltip('居服員:N'), alt.Tooltip('總工時:Q', title='總工時（小時）', format='.1f'),
+           alt.Tooltip('段:N'), alt.Tooltip('工時:Q', title='這段（小時）', format='.1f'),
+           alt.Tooltip('區間:N', title='和平均比'), alt.Tooltip('加班狀態:N')]
+    domain = [b for b in colors]
+    bars = alt.Chart(long).mark_bar(size=14, cornerRadiusEnd=3).encode(
+        y=y, x=alt.X('sum(工時):Q', title='本期總工時（小時，含轉場）', axis=alt.Axis(grid=True, gridColor='#EFE8DD')),
+        color=alt.Color('區間:N', scale=alt.Scale(domain=domain, range=[colors[b] for b in domain]),
+                        legend=alt.Legend(title=None, orient='top', labelFontSize=13)),
+        opacity=alt.Opacity('段:N', scale=alt.Scale(domain=['服務', '轉場'], range=[1.0, 0.45]),
+                            legend=alt.Legend(title=None, orient='top', labelFontSize=13)),
+        order=alt.Order('段:N', sort='ascending'), tooltip=tip)
+    ref = pd.DataFrame([dict(info, 標=f"平均 {info['mean']:.1f} 小時")])
+    zone = alt.Chart(ref).mark_rect(color='#2F855A', opacity=0.10).encode(x='low:Q', x2='high:Q')
+    mean = alt.Chart(ref).mark_rule(color='#6B5E52', strokeDash=[5, 4], strokeWidth=1.5).encode(x='mean:Q')
+    mean_txt = alt.Chart(ref).mark_text(align="left", dx=4, dy=10, fontSize=12, color='#6B5E52').encode(
+        x='mean:Q', y=alt.value(0), text='標:N')
+    warn = frame[frame['加班狀態'] != '正常'].assign(
+        標記=lambda d: d['加班狀態'].map({'接近上限': '⚠ 接近加班上限', '超過上限': '⛔ 超過加班上限'}))
+    layers = [zone, bars, mean, mean_txt]
+    if not warn.empty:
+        layers.append(alt.Chart(warn).mark_text(align='left', dx=6, fontSize=12, fontWeight='bold', color='#B42318')
+                      .encode(y=alt.Y('居服員:N', sort=names), x='總工時:Q', text='標記:N'))
+    height = max(220, 24 * len(names) + 40)
+    return (alt.layer(*layers).properties(height=height)
+            .configure_view(stroke=None).configure_axis(labelColor='#6B5E52', titleColor='#6B5E52', titleFontSize=13))
 
 
 def stat_strip(items):
@@ -1552,7 +1697,8 @@ def step_action_bar(current, label=None, target=None, hint='', disabled=False, h
     """
     index = FLOW_KEYS.index(current) if current in FLOW_KEYS else None
     prev = FLOW_KEYS[index - 1] if index else ('review' if current == 'analytics' else None)
-    with st.container(key=f'cfactionbar_{tone}'):
+    # key 帶模組代碼：換頁時舊頁面的操作列不會被當成同一個元件留下（見 module_header 的隱藏規則）
+    with st.container(key=f'cfactionbar_{tone}_{current}'):
         left, middle, right = st.columns([1, 2.1, 1.5], vertical_alignment='center')
         if prev:
             left.button(f'← 上一步：{STEP_LABELS[prev]}', key=f'cfbar_prev_{current}', on_click=go_to_module,

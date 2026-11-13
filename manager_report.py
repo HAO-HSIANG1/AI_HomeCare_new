@@ -73,6 +73,42 @@ def load_distribution(workload, label=str):
     return table
 
 
+LOAD_BANDS = ['偏高', '接近平均', '偏低']
+LOAD_COLORS = {'偏高': '#B45309', '接近平均': '#1F5F7A', '偏低': '#8AA9B8'}   # 同 WARM_CSS 的琥珀、主色與淡主色
+
+
+def load_chart_frame(workload, label=str, band=None):
+    """人力負荷分布圖的資料：每位有排班（總工時 > 0）的居服員一列，依總工時由高到低。
+
+    回傳 (frame, info)。frame 欄位：居服員（顯示名稱）、服務工時、轉場工時、總工時、
+    區間（偏高／接近平均／偏低，平均 ±band，含邊界）、加班狀態（正常／接近上限／超過上限）。
+    info：dict(mean, low, high)。band 預設用 kpi_metrics.WORKLOAD_BAND，和試辦 KPI C3 是同一個算法。"""
+    from kpi_metrics import WORKLOAD_BAND
+    band = WORKLOAD_BAND if band is None else band
+    columns = ['居服員', '服務工時', '轉場工時', '總工時', '區間', '加班狀態']
+    if workload is None or workload.empty:
+        return pd.DataFrame(columns=columns), None
+    w = workload.copy()
+    w['總工時'] = pd.to_numeric(w['總工時'], errors='coerce').fillna(0.0)
+    w = w[w['總工時'] > 0]
+    if w.empty:
+        return pd.DataFrame(columns=columns), None
+    travel = pd.to_numeric(w.get('轉場工時', 0), errors='coerce').fillna(0.0).clip(lower=0)
+    w['轉場工時'] = travel.where(travel <= w['總工時'], w['總工時'])
+    w['服務工時'] = w['總工時'] - w['轉場工時']
+    mean = float(w['總工時'].mean())
+    low, high = mean * (1 - band), mean * (1 + band)
+    w['區間'] = '接近平均'
+    w.loc[w['總工時'] < low - 1e-9, '區間'] = '偏低'
+    w.loc[w['總工時'] > high + 1e-9, '區間'] = '偏高'
+    w['加班狀態'] = w['狀態'] if '狀態' in w else '正常'
+    w['居服員'] = w['居服員'].map(label)
+    w = w.sort_values('總工時', ascending=False, kind='stable')
+    for col in ('服務工時', '轉場工時', '總工時'):
+        w[col] = w[col].astype(float).round(1)
+    return w[columns].reset_index(drop=True), dict(mean=round(mean, 1), low=round(low, 1), high=round(high, 1))
+
+
 def load_summary(workload):
     """一句話摘要用的數字。"""
     if workload is None or workload.empty:

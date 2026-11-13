@@ -116,6 +116,57 @@ KPI_SPECS = [
 ]
 SPEC_BY_CODE = {spec.code: spec for spec in KPI_SPECS}
 
+# 畫面燈號用的目標值（見 PILOT_KPI.md「目標與燈號」）。good／warn：(下限, 上限)，None＝不限；
+# 落在 good 是綠燈、落在 warn 是黃燈、其他是紅燈。meter_max：進度條滿格代表的數值（百分比類是 100）。
+# 這是試辦期的參考門檻，不影響排班；機構要調整就改這裡，畫面與文件跟著變。
+TARGETS = {
+    'A1': dict(good=(98, None), warn=(95, None), text='目標 ≥98%', meter_max=100),
+    'A2': dict(good=(None, 2), warn=(None, 5), text='目標 ≤2%', meter_max=10),
+    'A3': dict(good=(60, 85), warn=(45, 95), text='目標 60～85%', meter_max=100),
+    'B1': dict(good=(80, None), warn=(70, None), text='目標 ≥80%', meter_max=100),
+    'C1': dict(good=(None, 15), warn=(None, 25), text='目標 ≤15 分鐘', meter_max=30),
+    'C2': dict(good=(None, 15), warn=(None, 25), text='目標 ≤15%', meter_max=40),
+    'C3': dict(good=(70, None), warn=(50, None), text='目標 ≥70%', meter_max=100),
+    'C4': dict(good=(100, None), warn=(95, None), text='目標 100%', meter_max=100),
+}
+
+
+def _within(value, bounds):
+    low, high = bounds
+    return (low is None or value >= low - 1e-9) and (high is None or value <= high + 1e-9)
+
+
+def judge(result):
+    """一項 KPI 的燈號：dict(status, text, meter, band)。
+
+    status：good（達標）／warn（接近）／bad（未達）／None（沒有目標或待量測）；text：「目標 ≥98%」；
+    meter：0～100，進度條長度；band：(起, 迄) 0～100，進度條上標出的達標區間。"""
+    target = TARGETS.get(result.get('代碼'))
+    value = result.get('數值')
+    if not target:
+        return dict(status=None, text='', meter=None, band=None)
+    top = float(target['meter_max'])
+    low, high = target['good']
+    band = (0.0 if low is None else min(100.0, low / top * 100), 100.0 if high is None else min(100.0, high / top * 100))
+    if value is None:
+        return dict(status=None, text=target['text'], meter=None, band=band)
+    status = 'good' if _within(value, target['good']) else 'warn' if _within(value, target['warn']) else 'bad'
+    return dict(status=status, text=target['text'], meter=max(0.0, min(100.0, value / top * 100)), band=band)
+
+
+def continuity_spread(result):
+    """B1 的分布說明：每個有主責的案家，本期由幾位不同的居服員服務過。
+
+    回傳 dict(households, one, two, more, low_share)：案家數、只有 1 位（都是主責本人）、2 位、3 位以上，
+    以及主責本人服務不到一半的案家數。沒有明細時回傳 None。"""
+    detail = result.get('detail')
+    if detail is None or detail.empty or '案家ID' not in detail:
+        return None
+    per = detail.groupby('案家ID').agg(people=('派單居服員', 'nunique'),
+                                     own=('結果', lambda s: float((s == '主責本人').mean())))
+    return dict(households=int(len(per)), one=int((per['people'] <= 1).sum()), two=int((per['people'] == 2).sum()),
+                more=int((per['people'] >= 3).sum()), low_share=int((per['own'] < 0.5).sum()))
+
 TABLE_COLUMNS = ['組別', '代碼', '指標', '數值', '單位', '分子', '分子說明', '分母', '分母說明', '期間', '計算方式',
                  '資料來源', '方向', '備註']
 COMPARE_COLUMNS = ['組別', '代碼', '指標', '單位', '方向', '基準月', '基準月數值', '基準月分子', '基準月分母',

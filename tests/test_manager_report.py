@@ -93,3 +93,16 @@ def test_analytics_page_renders(tmp_path, monkeypatch):
         assert text in page, text
     assert '100.0%' in page                       # 9 筆全部派出
     assert len(app.get('download_button')) >= 2   # PDF、PNG
+
+
+def test_load_chart_frame_bands():
+    workload = pd.DataFrame({'居服員': ['G1', 'G2', 'G3', 'G4'], '總工時': [130.0, 100.0, 70.0, 0.0],
+                             '轉場工時': [10.0, 8.0, 5.0, 0.0], '狀態': ['接近上限', '正常', '正常', '正常']})
+    frame, info = mr.load_chart_frame(workload, lambda x: x + '｜王○○')
+    # 只算有排班的 3 人：平均 (130+100+70)/3 = 100，±20% = 80～120
+    assert info == dict(mean=100.0, low=80.0, high=120.0)
+    assert list(frame['居服員']) == ['G1｜王○○', 'G2｜王○○', 'G3｜王○○']
+    assert list(frame['區間']) == ['偏高', '接近平均', '偏低']
+    assert frame.loc[0, '服務工時'] == 120.0 and frame.loc[0, '加班狀態'] == '接近上限'   # 130 − 10
+    empty, none = mr.load_chart_frame(pd.DataFrame())
+    assert empty.empty and none is None

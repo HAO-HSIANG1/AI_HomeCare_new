@@ -231,3 +231,22 @@ def test_spec_codes_unique_and_documented():
     doc = (pathlib.Path(__file__).resolve().parent.parent / 'PILOT_KPI.md').read_text(encoding='utf-8')
     for spec in km.KPI_SPECS:
         assert f'| {spec.code} | {spec.name} |' in doc
+
+
+def test_judge_lights():
+    # A1 98.6 ≥ 98 → 綠；A3 48.1 在 45～60 → 橘；C3 46.9 < 50 → 紅
+    assert km.judge({'代碼': 'A1', '數值': 98.6})['status'] == 'good'
+    assert km.judge({'代碼': 'A3', '數值': 48.1})['status'] == 'warn'
+    c3 = km.judge({'代碼': 'C3', '數值': 46.9})
+    assert c3['status'] == 'bad' and c3['band'] == (70.0, 100.0)
+    # C1 12 分鐘 ÷ 滿格 30 分鐘 = 40% 長度；待量測沒有燈號
+    assert km.judge({'代碼': 'C1', '數值': 12.0})['meter'] == 40.0
+    assert km.judge({'代碼': 'B1', '數值': None})['status'] is None
+
+
+def test_continuity_spread():
+    detail = pd.DataFrame({'結果': ['主責本人', '其他居服員', '主責本人', '其他居服員', '其他居服員'],
+                           '案家ID': ['A', 'A', 'B', 'C', 'C'], '派單居服員': ['G1', 'G2', 'G3', 'G4', 'G5']})
+    # A：2 位、主責 1/2（不算不到一半）；B：1 位；C：2 位、主責 0/2
+    assert km.continuity_spread({'detail': detail}) == dict(households=3, one=1, two=2, more=0, low_share=1)
+    assert km.continuity_spread({'detail': pd.DataFrame()}) is None

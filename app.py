@@ -385,7 +385,7 @@ except Exception:
     pass
 from careflow_ui import (render_brand, section_title, render_summary, chips, flow_cards, file_status,
                          MODULES, MODULE_KEYS, module_label, module_header, step_action_bar, subhead,
-                         go_to_module, empty_module, big_tabs,
+                         go_to_module, empty_module, big_tabs, load_chart,
                          reason_picker, reason_category, compose_reason, REASON_HINT, CHANGE_REASONS,
                          render_header, side_brand, ready_cards, kpi_cards, conn_card, badges, reason_badge,
                          time_shift_html, line_preview, line_preview_empty, impact_cards, advice_cards,
@@ -3562,16 +3562,22 @@ if "last_result" in st.session_state:
             render_demand_heat(_dashboard, advice=False)
 
             subhead('人力負荷分布：工作量有沒有平均')
-            _load = _mr.load_distribution(_dashboard['workload'], caregiver_label)
+            _load, _load_info = _mr.load_chart_frame(_dashboard['workload'], caregiver_label)
             _ls = _mr.load_summary(_dashboard['workload'])
             if _load.empty:
                 st.info('目前沒有可分析的工時資料。')
             else:
-                _bars = _load.loc[:, [c for c in _mr.STATUS_ORDER if _load[c].sum() > 0]]
-                st.bar_chart(_bars, height=260, y_label='總工時（小時）', x_label='',
-                             color=[_mr.STATUS_COLORS[c] for c in _bars.columns])
+                _bands = _load['區間'].value_counts()
+                st.caption(f"依總工時由高到低排列；淡綠底是平均 ±20%（{_load_info['low']:.1f}～{_load_info['high']:.1f} 小時），"
+                           f"和試辦 KPI「C3」同一算法：偏高 {int(_bands.get('偏高', 0))} 人、接近平均 {int(_bands.get('接近平均', 0))} 人、"
+                           f"偏低 {int(_bands.get('偏低', 0))} 人。每條較淡的一段是轉場工時。")
+                try:
+                    st.altair_chart(load_chart(_load, _load_info, _mr.LOAD_COLORS), width='stretch')
+                except Exception as exc:     # 圖表元件出問題時退回簡單長條圖，報表其他部分不受影響
+                    _log_error('人力負荷分布圖', exc)
+                    st.bar_chart(_load.set_index('居服員')[['服務工時', '轉場工時']], height=260, y_label='總工時（小時）', x_label='')
                 st.caption(f"有排班 {_active_people} ／ 全部 {_all_people} 人；每人本期總工時 {_ls['min_hours']:.1f}～{_ls['max_hours']:.1f} 小時"
-                           f"（含轉場）。接近月加班上限 {_ls['near']} 人、超過 {_ls['over']} 人。")
+                           f"（含轉場）。接近月加班上限 {_ls['near']} 人、超過 {_ls['over']} 人（條尾標 ⚠／⛔）。")
 
             # ---------- 下段：AI 增聘和調派建議 ----------
             subhead('AI 增聘和調派建議')

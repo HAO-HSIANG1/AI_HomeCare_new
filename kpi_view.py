@@ -35,6 +35,37 @@ def _parts_text(result):
     return f"{_num(result['分子'])} {spec.num_unit} ／ {_num(result['分母'])} {spec.den_unit}"
 
 
+_TONE = {'good': 'ok', 'warn': 'warn', 'bad': 'bad'}
+_NOTES = {'bad': {'C3': '↓ 工時分布見主管報表「人力負荷分布」'}}
+
+
+def _card(result):
+    """一項 KPI 結果 → kpi_cards 的卡片：燈號色條、進度條＋達標區間、目標文字，算法放在 ⓘ。"""
+    spec = km.SPEC_BY_CODE[result['代碼']]
+    goal = km.judge(result)
+    if result['數值'] is None:
+        tone = 'warn'
+    else:
+        tone = _TONE.get(goal['status'], 'good')
+    return dict(label=f"{result['代碼']} {result['指標']}", value=value_text(result), sub=_parts_text(result),
+                tone=tone, help=result['計算方式'], tip=spec.hint or result['計算方式'],
+                meter=goal['meter'], band=goal['band'], goal=goal['text'],
+                note=_NOTES.get(goal['status'], {}).get(result['代碼'], ''))
+
+
+def _continuity_card(result):
+    """B1 寬卡：左邊主數字，右邊「每個案家由幾位居服員服務」的分布長條。"""
+    card = _card(result)
+    spread = km.continuity_spread(result)
+    if spread:
+        card.update(wide=True, spread=[('只由 1 位服務', spread['one'], 's1'), ('2 位輪流', spread['two'], 's2'),
+                                       ('3 位以上', spread['more'], 's3')])
+        card['note'] = (f"有主責的案家 {spread['households']:,} 戶；其中 {spread['low_share']:,} 戶"
+                        '主責本人服務不到一半，建議優先檢查。' if spread['low_share']
+                        else f"有主責的案家 {spread['households']:,} 戶，每戶都以主責本人服務為主。")
+    return card
+
+
 def _notify(text, ok=True):
     st.session_state[_NOTICE] = (ok, text)
 
@@ -157,15 +188,14 @@ def render_pilot_kpis(inputs, scope, db_path, account, show_table, export_frame,
     groups = km.by_group(results)
 
     st.caption(f"統計期間：{km.period_label(inputs.get('tasks'))}。全部由系統班表與工時計算；定義見 PILOT_KPI.md。"
-               '每項都列出分子、分母、期間與計算方式，展開可看明細；沒有資料的項目顯示「待量測」，不自行假設數字。')
+               '每項都列出分子、分母、期間與計算方式，展開可看明細；沒有資料的項目顯示「待量測」，不自行假設數字。'
+               '卡片左側色條：綠＝達標、橘＝接近、紅＝未達（目標值見 PILOT_KPI.md「目標與燈號」）；'
+               '進度條上的淡綠區是達標範圍，滑過標籤旁的 ⓘ 看算法。')
     for code, name, question, items in groups:
         subhead(f'{code}　{name}')
         st.caption(question)
-        kpi_cards([dict(label=f"{r['代碼']} {r['指標']}", value=value_text(r), sub=_parts_text(r),
-                        tone='good' if r['數值'] is not None else 'warn', help=r['計算方式']) for r in items])
-        hints = [km.SPEC_BY_CODE[r['代碼']].hint for r in items if km.SPEC_BY_CODE[r['代碼']].hint]
-        if hints:
-            st.caption('\n\n'.join(hints))
+        # 算法說明放在每張卡標籤旁的 ⓘ（滑過可看），不再佔一整行灰字
+        kpi_cards([_continuity_card(r) if r['代碼'] == 'B1' else _card(r) for r in items])
 
     subhead('逐項指標：分子、分母、期間、計算方式')
     table = km.kpi_table(results)
